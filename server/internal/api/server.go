@@ -22,7 +22,6 @@ import (
 )
 
 type Config struct {
-	SetupCode      string
 	Version        string
 	AllowedOrigins []string
 }
@@ -207,6 +206,7 @@ type authInput struct {
 	Username    string `json:"username"`
 	Password    string `json:"password"`
 	DisplayName string `json:"display_name,omitempty"`
+	// Accepted only for request compatibility with r2 clients; no longer required.
 	SetupCode   string `json:"setup_code,omitempty"`
 	DeviceID    string `json:"device_id"`
 	DeviceLabel string `json:"device_label"`
@@ -253,9 +253,6 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if len(s.cfg.SetupCode) < 24 || !secretEqual(input.SetupCode, s.cfg.SetupCode) {
-		return fail(403, "registration_closed")
-	}
 	if !validText(input.DisplayName, 40) {
 		return fail(400, "invalid_input")
 	}
@@ -276,16 +273,6 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	defer tx.Rollback(r.Context())
-	if _, err = tx.Exec(r.Context(), `SELECT id FROM registration_gate WHERE id=1 FOR UPDATE`); err != nil {
-		return err
-	}
-	var count int
-	if err = tx.QueryRow(r.Context(), `SELECT count(*) FROM users`).Scan(&count); err != nil {
-		return err
-	}
-	if count >= 2 {
-		return fail(409, "account_limit")
-	}
 	if _, err = tx.Exec(r.Context(), `INSERT INTO users(id,username,display_name,password_hash) VALUES($1,$2,$3,$4)`, id, input.Username, input.DisplayName, hash); err != nil {
 		return err
 	}

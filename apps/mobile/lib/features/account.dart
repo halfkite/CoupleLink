@@ -22,7 +22,6 @@ class _AccountPageState extends ConsumerState<AccountPage> {
       username = TextEditingController(),
       password = TextEditingController(),
       displayName = TextEditingController(),
-      setup = TextEditingController(),
       invitation = TextEditingController(),
       timezone = TextEditingController(text: 'Asia/Hong_Kong');
   bool register = false, showPassword = false;
@@ -40,7 +39,6 @@ class _AccountPageState extends ConsumerState<AccountPage> {
       username,
       password,
       displayName,
-      setup,
       invitation,
       timezone,
     ]) {
@@ -59,11 +57,9 @@ class _AccountPageState extends ConsumerState<AccountPage> {
           password: password.text,
           register: register,
           displayName: displayName.text,
-          setupCode: setup.text,
         );
     if (mounted && ref.read(connectionProvider).signedIn) {
       password.clear();
-      setup.clear();
     }
   }
 
@@ -168,6 +164,15 @@ class _AccountPageState extends ConsumerState<AccountPage> {
                           }
                         },
                       ),
+                      const SizedBox(height: 8),
+                      Text(
+                        s.t('account.serverHint', {
+                          'hosts': configuredLocalHttpHosts.isEmpty
+                              ? s.t('account.noLocalHosts')
+                              : configuredLocalHttpHosts,
+                        }),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                       const SizedBox(height: 16),
                       Wrap(
                         spacing: 10,
@@ -240,22 +245,6 @@ class _AccountPageState extends ConsumerState<AccountPage> {
                             counterText: '',
                           ),
                           validator: requiredValue,
-                        ),
-                        const SizedBox(height: 16),
-                        TextFormField(
-                          controller: setup,
-                          obscureText: true,
-                          autocorrect: false,
-                          enableSuggestions: false,
-                          decoration: InputDecoration(
-                            labelText: s.t('account.setupCode'),
-                          ),
-                          validator: requiredValue,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          s.t('account.setupHint'),
-                          style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
                       const SizedBox(height: 22),

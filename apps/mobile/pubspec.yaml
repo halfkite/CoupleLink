@@ -1,7 +1,7 @@
 name: couplelink
 description: "CoupleLink private couple space UI preview"
 publish_to: 'none'
-version: 1.0.0-r2+2
+version: 1.0.0-r3+3
 
 environment:
   sdk: ^3.13.7

@@ -1,4 +1,4 @@
-# 构建 CoupleLink 1.0-r2
+# 构建 CoupleLink 1.0-r3
 
 ## 固定环境
 
@@ -44,6 +44,12 @@ Vela 工程中执行 `npm ci` 与 `npm run release`。调试用 `npm run build` 
 
 ## 版本
 
-本轮所有发布名称为 `1.0-r2`，Flutter/npm 的机器格式为 `1.0.0-r2`。后续使用 `node scripts/set-revision.mjs N` 同步应用、服务端、锁文件和显示版本；重编本轮包不递增。未经用户明确要求不改主版本 `1.0`。
+本轮所有发布名称为 `1.0-r3`，Flutter/npm 的机器格式为 `1.0.0-r3`。后续使用 `node scripts/set-revision.mjs N` 同步应用、服务端、锁文件和显示版本；重编本轮包不递增。未经用户明确要求不改主版本 `1.0`。
 
 服务端可单独执行 `./scripts/build-server.ps1 -GoCommand 'Go可执行文件路径'`，输出 Windows/Linux x64 二进制到 `.tools/server-release`。设置 `COUPLELINK_TEST_DATABASE_URL` 后脚本会运行真正的数据库集成测试；未设置时该项会明确跳过。完整构建脚本支持同名 `-GoCommand` 参数。
+
+## 指定局域网地址
+
+`./scripts/build.ps1 -LocalHttpHosts '你的服务器私有IPv4地址'` 将同一配置交给 Flutter 和 Android。直接 Flutter 构建时使用 `--dart-define=COUPLELINK_LOCAL_HTTP_HOSTS=地址`。支持逗号分隔的明确地址，拒绝公共 IP、通配域和整个网段。
+
+Android Gradle 的 Variant API 注册生成资源任务，生成精确域名规则；静态和生成的 base-config 都保持 cleartextTrafficPermitted=false。没有配置时只允许原有回环调试地址。本轮构建值是 10.74.205.253；它是部署配置，不写死在业务代码中。

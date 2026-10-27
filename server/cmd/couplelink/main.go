@@ -16,7 +16,7 @@ import (
 	_ "time/tzdata"
 )
 
-var version = "1.0-r2"
+var version = "1.0-r3"
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -40,7 +40,7 @@ func main() {
 	if err = api.Migrate(boot, db); err != nil {
 		log.Fatal("database migration failed")
 	}
-	handler, err := api.New(db, api.Config{SetupCode: os.Getenv("COUPLELINK_SETUP_CODE"), Version: version,
+	handler, err := api.New(db, api.Config{Version: version,
 		AllowedOrigins: strings.Fields(os.Getenv("COUPLELINK_ALLOWED_ORIGINS"))})
 	if err != nil {
 		log.Fatal("API initialization failed")

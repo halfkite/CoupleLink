@@ -4,7 +4,7 @@
         android:label="CoupleLink"
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
-        android:networkSecurityConfig="@xml/network_security_config"
+        android:networkSecurityConfig="${couplelinkNetworkSecurityConfig}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

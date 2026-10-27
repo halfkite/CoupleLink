@@ -3,6 +3,7 @@ param(
     [string]$JavaDirectory = 'D:\toolchains\jdk17',
     [string]$AndroidSdkDirectory,
     [string]$GoCommand = 'go',
+    [string]$LocalHttpHosts = '',
     [switch]$Preview
 )
 $ErrorActionPreference = 'Stop'
@@ -17,6 +18,7 @@ $env:LOCALAPPDATA = Join-Path $projectRoot '.tools\localappdata'
 $env:npm_config_cache = Join-Path $projectRoot '.tools\npm-cache'
 $env:JAVA_HOME = $JavaDirectory
 $env:ANDROID_HOME = $AndroidSdkDirectory
+$networkDefines = @("--dart-define=COUPLELINK_LOCAL_HTTP_HOSTS=$LocalHttpHosts")
 $flutterCommand = Join-Path $FlutterDirectory 'bin\flutter.bat'
 function Assert-Exit([string]$label) { if ($LASTEXITCODE -ne 0) { throw "$label failed with exit code $LASTEXITCODE" } }
 Push-Location $projectRoot
@@ -34,10 +36,10 @@ try {
         Assert-Exit 'Static analysis'
         & $flutterCommand test --no-pub
         Assert-Exit 'Flutter tests'
-        & $flutterCommand build apk --release --no-pub
+        & $flutterCommand build apk --release --no-pub @networkDefines
         Assert-Exit 'Android APK'
         if ($Preview) {
-            & $flutterCommand build web --no-pub --no-wasm-dry-run --no-web-resources-cdn
+            & $flutterCommand build web --no-pub --no-wasm-dry-run --no-web-resources-cdn @networkDefines
             Assert-Exit 'Web preview'
         }
     } finally { Pop-Location }

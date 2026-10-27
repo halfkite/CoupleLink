@@ -56,8 +56,7 @@ func TestPostgresAccountPairingAndRevocation(t *testing.T) {
 	if err = Migrate(ctx, db); err != nil {
 		t.Fatal("migration must be repeatable", err)
 	}
-	setup := "test-only-setup-code-with-enough-entropy"
-	service, err := New(db, Config{SetupCode: setup, Version: "integration", AllowedOrigins: []string{"http://127.0.0.1:5178"}})
+	service, err := New(db, Config{Version: "integration", AllowedOrigins: []string{"http://127.0.0.1:5178"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,22 +104,21 @@ func TestPostgresAccountPairingAndRevocation(t *testing.T) {
 			t.Fatal(err)
 		}
 		return map[string]any{
-			"username": name, "password": "integration password 123", "display_name": name, "setup_code": setup,
+			"username": name, "password": "integration password 123", "display_name": name,
 			"device_id": device, "device_label": "integration phone", "platform": "android"}
 	}
 	a, b := input("alice"), input("bob")
 	status, data := call("GET", "/account", "", nil)
 	expect(401, status, data)
-	wrong := input("bad")
-	wrong["setup_code"] = "incorrect"
-	status, data = call("POST", "/auth/register", "", wrong)
-	expect(403, status, data)
 	status, data = call("POST", "/auth/register", "", a)
 	expect(201, status, data)
 	alice := data["token"].(string)
 	status, data = call("POST", "/auth/register", "", b)
 	expect(201, status, data)
 	bob := data["token"].(string)
+	status, data = call("POST", "/auth/register", "", input("third"))
+	expect(201, status, data)
+	third := data["token"].(string)
 	status, data = call("POST", "/auth/register", "", input("third"))
 	expect(409, status, data)
 	status, data = call("POST", "/couples/invitations", alice, nil)
@@ -163,6 +161,16 @@ func TestPostgresAccountPairingAndRevocation(t *testing.T) {
 	expect(200, status, data)
 	if len(data["events"].([]any)) != 1 || data["next_cursor"] != float64(1) {
 		t.Fatal("missing atomic bind event")
+	}
+	status, data = call("GET", "/couples/current", third, nil)
+	expect(200, status, data)
+	if data["couple"] != nil {
+		t.Fatal("unrelated account can see another couple")
+	}
+	status, data = call("GET", "/sync/changes?cursor=0", third, nil)
+	expect(200, status, data)
+	if len(data["events"].([]any)) != 0 {
+		t.Fatal("unrelated account received couple events")
 	}
 	status, data = call("DELETE", "/couples/current", alice, map[string]any{"version": 999})
 	expect(409, status, data)
@@ -228,5 +236,5 @@ func TestPostgresAccountPairingAndRevocation(t *testing.T) {
 	if tokens != 0 {
 		t.Fatal("plaintext token stored")
 	}
-	t.Log(fmt.Sprintf("real PostgreSQL verified: migration, 2-account limit, concurrent single-use pairing, revisions, scoped sync, multi-device revocation"))
+	t.Log(fmt.Sprintf("real PostgreSQL verified: migration, no account cap or setup code, duplicate registration, concurrent single-use pairing, revisions, scoped sync, multi-device revocation"))
 }

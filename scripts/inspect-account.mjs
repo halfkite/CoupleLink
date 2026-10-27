@@ -5,8 +5,9 @@ import {fileURLToPath} from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const version=fs.readFileSync(path.join(root,'VERSION'),'utf8').trim();
 const directory=path.join(root,'artifacts',version,'screenshots');
-const setup=fs.readFileSync(path.join(root,'.secrets/qa-setup-code.txt'),'utf8').trim();
 const password='isolated UI integration password';
+const apiOrigin=process.env.COUPLELINK_TEST_API_ORIGIN;
+if(!apiOrigin||new URL(apiOrigin).hostname!=='127.0.0.1')throw Error('Set COUPLELINK_TEST_API_ORIGIN to an isolated loopback test API; do not use a real personal server.');
 const browser=await chromium.launch({executablePath:process.env.COUPLELINK_EDGE??'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
 const errors=[];
 async function enter(page,label,value) {
@@ -20,7 +21,7 @@ try {
   for(const [username,display] of [['qa_alice','测试甲'],['qa_bob','测试乙']]) {
     const context=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:2,reducedMotion:'reduce'});
     const page=await context.newPage(); pages.push(page);
-    page.on('response',async response=>{if(response.url().startsWith('http://127.0.0.1:18080')){console.log(response.request().method(),new URL(response.url()).pathname,response.status());if(response.status()>=400)console.log('API error:',(await response.json()).code);}});
+    page.on('response',async response=>{if(response.url().startsWith(apiOrigin)){console.log(response.request().method(),new URL(response.url()).pathname,response.status());if(response.status()>=400)console.log('API error:',(await response.json()).code);}});
     page.on('pageerror',error=>errors.push(error.message));
     await page.route('**/*',route=>new URL(route.request().url()).hostname==='127.0.0.1'?route.continue():route.abort());
     await page.goto('http://127.0.0.1:5178');
@@ -28,7 +29,14 @@ try {
     await page.locator('flt-semantics-placeholder').evaluate(element=>element.click());
     await page.getByRole('button',{name:'我的',exact:true}).press('Enter');
     await page.getByRole('button',{name:/连接服务器 \/ 登录 \/ 情侣绑定/}).press('Enter');
-    await enter(page,'服务器地址','http://127.0.0.1:18080');
+    if(username==='qa_alice') {
+      await page.getByRole('checkbox',{name:'注册',exact:true}).press('Enter');
+      await page.getByRole('textbox',{name:'显示昵称',exact:true}).waitFor();
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+      await page.screenshot({path:path.join(directory,'registration-no-setup.png')});
+      await page.getByRole('checkbox',{name:'登录',exact:true}).press('Enter');
+    }
+    await enter(page,'服务器地址',apiOrigin);
     await enter(page,'账号名',username);
     await enter(page,'密码',password);
     await page.getByRole('button',{name:'登录',exact:true}).press('Enter');
@@ -39,7 +47,6 @@ try {
     if(await page.getByText('账号或密码不正确',{exact:true}).count()) {
       await page.getByRole('checkbox',{name:'注册',exact:true}).press('Enter');
       await enter(page,'显示昵称',display);
-      await enter(page,'服务器设置码',setup);
       await page.getByRole('button',{name:'注册',exact:true}).press('Enter');
     }
     await page.mouse.move(220,350);

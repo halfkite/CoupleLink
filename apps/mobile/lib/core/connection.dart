@@ -98,17 +98,45 @@ final connectionProvider =
       ConnectionController.new,
     );
 
-String normalizeOrigin(String value) {
+const configuredLocalHttpHosts = String.fromEnvironment(
+  'COUPLELINK_LOCAL_HTTP_HOSTS',
+);
+
+bool isPrivateIPv4(String host) {
+  final parts = host.split('.');
+  if (parts.length != 4) return false;
+  final bytes = <int>[];
+  for (final part in parts) {
+    if (!RegExp(r'^(0|[1-9][0-9]{0,2})$').hasMatch(part)) return false;
+    final byte = int.parse(part);
+    if (byte > 255) return false;
+    bytes.add(byte);
+  }
+  return bytes[0] == 10 ||
+      (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+      (bytes[0] == 192 && bytes[1] == 168);
+}
+
+String normalizeOrigin(
+  String value, {
+  String localHttpHosts = configuredLocalHttpHosts,
+}) {
   final uri = Uri.tryParse(value.trim());
   if (uri == null ||
       !uri.hasAuthority ||
+      uri.host.isEmpty ||
       uri.userInfo.isNotEmpty ||
       uri.hasQuery ||
       uri.hasFragment ||
       (uri.path.isNotEmpty && uri.path != '/') ||
       (uri.scheme != 'https' &&
           !(uri.scheme == 'http' &&
-              ['127.0.0.1', 'localhost', '10.0.2.2'].contains(uri.host)))) {
+              (['127.0.0.1', 'localhost', '10.0.2.2'].contains(uri.host) ||
+                  (isPrivateIPv4(uri.host) &&
+                      localHttpHosts
+                          .split(',')
+                          .map((host) => host.trim())
+                          .contains(uri.host)))))) {
     throw const ApiException('https_required');
   }
   return uri.replace(path: '').toString();
@@ -160,6 +188,8 @@ class ConnectionController extends Notifier<ConnectionState> {
   }) async {
     final client = ref.read(httpProvider);
     final req = http.Request(method, Uri.parse('${state.origin}$path'));
+    // The selected origin must not redirect requests to a different destination.
+    req.followRedirects = false;
     if (auth) {
       if (_token == null) throw const ApiException('unauthorized');
       req.headers['Authorization'] = 'Bearer $_token';
@@ -247,7 +277,6 @@ class ConnectionController extends Notifier<ConnectionState> {
     required String password,
     required bool register,
     String displayName = '',
-    String setupCode = '',
   }) => _perform(() async {
     final url = normalizeOrigin(origin);
     if (url != state.origin) {
@@ -281,7 +310,6 @@ class ConnectionController extends Notifier<ConnectionState> {
         'device_label': kIsWeb ? 'Browser preview' : 'Android phone',
         'platform': kIsWeb ? 'web' : 'android',
         if (register) 'display_name': displayName,
-        if (register) 'setup_code': setupCode,
       },
     );
     final token = data['token'];

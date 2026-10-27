@@ -40,6 +40,27 @@ void main() {
     }
     expect(normalizeOrigin(' https://example.com/ '), 'https://example.com');
     expect(normalizeOrigin('http://127.0.0.1:18080'), 'http://127.0.0.1:18080');
+    const allowed = '10.74.205.253,192.168.1.2,172.16.0.1,172.31.255.254';
+    for (final host in allowed.split(',')) {
+      expect(
+        normalizeOrigin('http://$host:18080', localHttpHosts: allowed),
+        'http://$host:18080',
+      );
+    }
+    for (final host in [
+      '8.8.8.8',
+      '172.15.255.255',
+      '172.32.0.1',
+      '192.169.1.2',
+      '10.1.2.999',
+      '010.1.2.3',
+      '192.168.1.2.example.com',
+    ]) {
+      expect(
+        () => normalizeOrigin('http://$host:18080', localHttpHosts: host),
+        throwsA(isA<ApiException>()),
+      );
+    }
   });
   test('bearer token stays in vault and revoked sessions clear authenticated state', () async {
     SharedPreferences.setMockInitialValues({});
@@ -49,6 +70,7 @@ void main() {
     var authenticatedCalls = 0;
     final client = MockClient((req) async {
       if (req.url.path == '/healthz') {
+        expect(req.followRedirects, isFalse);
         return http.Response(jsonEncode({'api_version': 1}), 200);
       }
       if (req.url.path == '/auth/login') {

@@ -103,6 +103,7 @@ void main() {
       await tester.ensureVisible(find.widgetWithText(ChoiceChip, '注册'));
       await tester.tap(find.widgetWithText(ChoiceChip, '注册'));
       await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextFormField, '服务器设置码'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

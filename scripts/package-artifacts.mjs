@@ -20,6 +20,8 @@ const sources=[
   ['deploy/.env.example','server-bundle/deploy/.env.example'],
   ['server/Dockerfile','server-bundle/server/Dockerfile'],
   ['server/go.mod','server-bundle/server/go.mod'],['server/go.sum','server-bundle/server/go.sum'],
+  ['scripts/start-local-server.ps1','server-bundle/scripts/start-local-server.ps1'],
+  ['scripts/enable-lan-access.ps1','server-bundle/scripts/enable-lan-access.ps1'],
   ...['cmd/couplelink/main.go','internal/api/server.go','internal/api/security.go','migrations/001_accounts.sql','migrations/embed.go']
     .map(file=>[`server/${file}`,`server-bundle/server/${file}`]),
 ];
