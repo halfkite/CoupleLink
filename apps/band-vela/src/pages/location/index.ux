@@ -1,0 +1,34 @@
+<template>
+  <div class="page">
+    <list class="content">
+      <list-item type="page">
+        <div class="body">
+          <text class="eyebrow">{{words['app.demo']}}</text>
+          <text class="title">{{words['band.location.title']}}</text>
+          <div if="{{!confirmed}}" style="flex-direction:column;align-items:center">
+            <text class="heart" style="color:{{accent}}">⌖</text>
+<div class="card"><text class="label">{{words['band.location.distance']}}</text><text class="number" style="font-size:23px">8.6</text><text class="label">km</text><text class="note">{{words['band.location.hint']}}</text></div>
+<text class="note">{{words['band.location.sharing']}}</text>
+          </div>
+          <div if="{{confirmed}}" class="card">
+            <text class="message">{{words['band.interaction.ask']}}</text>
+            <div class="button" onclick="preview"><text class="button-text">{{words['band.interaction.confirm']}}</text></div>
+            <div class="button secondary" onclick="cancel"><text class="button-text">{{words['band.interaction.cancel']}}</text></div>
+          </div>
+          <text class="feedback" if="{{feedback}}">{{feedback}}</text>
+        </div>
+      </list-item>
+    </list>
+    <div class="footer">
+      <div class="nav" onclick="prev"><text class="nav-text">{{words['band.common.prev']}}</text></div>
+      <text class="counter">4 / 8</text>
+      <div class="nav" onclick="next"><text class="nav-text">{{words['band.common.next']}}</text></div>
+    </div>
+  </div>
+</template>
+<script>
+import { createPage } from '../../common/page';
+export default createPage(3);
+</script>
+<style src="../../common/style.css"></style>
+

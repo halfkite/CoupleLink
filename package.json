@@ -1,0 +1,13 @@
+{
+  "name": "couplelink",
+  "version": "1.0.0-r1",
+  "private": true,
+  "scripts": {
+    "check": "node scripts/check-contracts.mjs",
+    "band:build": "npm --prefix apps/band-vela run build",
+    "artifacts": "node scripts/package-artifacts.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1"
+  }
+}

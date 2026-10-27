@@ -1,0 +1,17 @@
+.tools/
+**/.dart_tool/
+**/build/
+**/node_modules/
+**/dist/
+**/.gradle/
+**/local.properties
+.secrets/
+*.jks
+*.keystore
+**/private.pem
+**/certificate.pem
+**/sign/
+artifacts/**
+!artifacts/.gitkeep
+*.log
+.DS_Store

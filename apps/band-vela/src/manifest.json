@@ -1,0 +1,24 @@
+{
+  "package": "app.couplelink.mobile",
+  "name": "CoupleLink",
+  "versionName": "1.0-r1",
+  "versionCode": 1,
+  "minPlatformVersion": 1200,
+  "icon": "/common/icon.png",
+  "deviceTypeList": ["watch"],
+  "features": [{ "name": "system.router" }, { "name": "system.storage" }],
+  "config": { "logLevel": "warn", "designWidth": 106 },
+  "router": {
+    "entry": "pages/home",
+    "pages": {
+      "pages/home": { "component": "index" },
+      "pages/interaction": { "component": "index" },
+      "pages/chat": { "component": "index" },
+      "pages/location": { "component": "index" },
+      "pages/pet": { "component": "index" },
+      "pages/anniversary": { "component": "index" },
+      "pages/status": { "component": "index" },
+      "pages/settings": { "component": "index" }
+    }
+  }
+}

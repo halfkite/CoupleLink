@@ -1,0 +1,58 @@
+name: CoupleLink UI verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          flutter-version: '3.47.8'
+          channel: stable
+          cache: true
+      - name: Version and localization contracts
+        run: node scripts/check-contracts.mjs
+      - name: Flutter dependencies and verification
+        working-directory: apps/mobile
+        run: |
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          flutter analyze --no-pub
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          flutter test --no-pub
+          exit $LASTEXITCODE
+      - name: Build verification APK
+        working-directory: apps/mobile
+        run: |
+          $env:JAVA_HOME = $env:JAVA_HOME_17_X64
+          flutter build apk --debug --no-pub
+          exit $LASTEXITCODE
+      - name: Build verification RPK
+        working-directory: apps/band-vela
+        run: |
+          npm ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: couplelink-ui-verification
+          path: |
+            apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
+            apps/band-vela/dist/*.rpk
+          if-no-files-found: error
+
+# CI debug certificates are tool-specific. These are verification artifacts,
+# not the paired, same-certificate Release packages generated locally.

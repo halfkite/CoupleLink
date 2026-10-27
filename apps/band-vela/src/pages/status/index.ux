@@ -1,0 +1,33 @@
+<template>
+  <div class="page">
+    <list class="content">
+      <list-item type="page">
+        <div class="body">
+          <text class="eyebrow">{{words['app.demo']}}</text>
+          <text class="title">{{words['band.status.title']}}</text>
+          <div if="{{!confirmed}}" style="flex-direction:column;align-items:center">
+            <div class="card"><text class="label">{{words['band.status.phone']}}</text><text class="message">{{words['band.status.battery']}}</text><text class="note">{{words['band.common.sample']}}</text></div>
+<div class="card"><text class="label">{{words['band.status.connection']}}</text><text class="message">{{words['band.common.offline']}}</text><text class="note">{{words['band.status.pending']}}</text></div>
+          </div>
+          <div if="{{confirmed}}" class="card">
+            <text class="message">{{words['band.interaction.ask']}}</text>
+            <div class="button" onclick="preview"><text class="button-text">{{words['band.interaction.confirm']}}</text></div>
+            <div class="button secondary" onclick="cancel"><text class="button-text">{{words['band.interaction.cancel']}}</text></div>
+          </div>
+          <text class="feedback" if="{{feedback}}">{{feedback}}</text>
+        </div>
+      </list-item>
+    </list>
+    <div class="footer">
+      <div class="nav" onclick="prev"><text class="nav-text">{{words['band.common.prev']}}</text></div>
+      <text class="counter">7 / 8</text>
+      <div class="nav" onclick="next"><text class="nav-text">{{words['band.common.next']}}</text></div>
+    </div>
+  </div>
+</template>
+<script>
+import { createPage } from '../../common/page';
+export default createPage(6);
+</script>
+<style src="../../common/style.css"></style>
+
