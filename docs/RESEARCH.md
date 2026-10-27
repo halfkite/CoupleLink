@@ -22,3 +22,11 @@
 - https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start
 
 手环 10：212×520 像素、106dp；designWidth 为设计基准，本项目用 106。后续 APK 与 RPK 包名和签名保持匹配。
+
+## 1.0-r2 实现参考与环境排障
+
+- [pgx](https://github.com/jackc/pgx)：数据库连接、事务和迁移锁；关系变更与事件写入同事务，用户级行锁保证事件提交顺序。
+- [Go Argon2](https://pkg.go.dev/golang.org/x/crypto/argon2)：使用 Argon2id、每密码随机盐；解析编码参数时只允许应用支持的固定成本，避免畸形记录触发任意内存分配。
+- [Android haptics](https://developer.android.com/develop/ui/views/haptics/haptic-feedback)：本机按键反馈通过系统 HapticFeedbackConstants，尊重系统开关。
+- [Android 网络安全配置](https://developer.android.com/privacy-and-security/security-config)：默认拒绝明文，调试仅允许明确回环域名且不包含子域名，不绕过证书。
+- [Docker 官方问题 #625](https://github.com/docker/desktop-feedback/issues/625)：与本机端点错误匹配；维护者说明 4.92 有修复，不能以目录重建或安装包下载代替真实启动验收。具体操作记录在 `DOCKER-REPAIR.md`。

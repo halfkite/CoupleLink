@@ -1,4 +1,4 @@
-# 构建 CoupleLink 1.0-r1
+# 构建 CoupleLink 1.0-r2
 
 ## 固定环境
 
@@ -6,6 +6,7 @@
 - Node.js 24，npm；Vela `aiot-toolkit` 2.0.5
 - JDK 17、Android SDK 36 / 35、Build Tools 36.0.0、NDK 28.2.13676358、CMake 3.22.1
 - Gradle 9.3.1、Android Gradle Plugin 9.1.0（Flutter 模板配置）
+- Go 1.27.3；数据库集成回归需要隔离的 PostgreSQL 17/18
 
 首次构建前通过 Android SDK Manager 安装上述依赖并接受相应许可。`apps/mobile/android/local.properties` 为机器本地路径，不提交。
 
@@ -43,4 +44,6 @@ Vela 工程中执行 `npm ci` 与 `npm run release`。调试用 `npm run build` 
 
 ## 版本
 
-本轮所有发布名称为 `1.0-r1`，Flutter/npm 的机器格式为 `1.0.0-r1`。下次对外交付再递增修订号；重编本轮包不递增。未经用户明确要求不改主版本 `1.0`。
+本轮所有发布名称为 `1.0-r2`，Flutter/npm 的机器格式为 `1.0.0-r2`。后续使用 `node scripts/set-revision.mjs N` 同步应用、服务端、锁文件和显示版本；重编本轮包不递增。未经用户明确要求不改主版本 `1.0`。
+
+服务端可单独执行 `./scripts/build-server.ps1 -GoCommand 'Go可执行文件路径'`，输出 Windows/Linux x64 二进制到 `.tools/server-release`。设置 `COUPLELINK_TEST_DATABASE_URL` 后脚本会运行真正的数据库集成测试；未设置时该项会明确跳过。完整构建脚本支持同名 `-GoCommand` 参数。

@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:couplelink/app.dart';
 import 'package:couplelink/core/state.dart';
 import 'package:couplelink/core/strings.dart';
+import 'package:couplelink/core/device_feedback.dart';
+import 'package:couplelink/features/interaction_feedback.dart';
+import 'package:couplelink/features/account.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,12 +13,24 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 late StringBundle testBundle;
 
+class FakeFeedback implements DeviceFeedback {
+  int stopped = 0;
+  @override
+  Future<FeedbackOutcome> preview({required bool sound}) async =>
+      FeedbackOutcome.suppressed;
+  @override
+  Future<void> stop() async {
+    stopped++;
+  }
+}
+
 Future<void> start(
   WidgetTester tester, {
   CoupleTheme theme = CoupleTheme.sakura,
   String locale = 'zh_CN',
   double scale = 1,
   Size size = const Size(390, 844),
+  DeviceFeedback? feedback,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -36,6 +51,8 @@ Future<void> start(
       overrides: [
         preferencesProvider.overrideWithValue(prefs),
         bundleProvider.overrideWithValue(testBundle),
+        if (feedback != null)
+          deviceFeedbackProvider.overrideWithValue(feedback),
       ],
       child: const CoupleLinkApp(),
     ),
@@ -50,6 +67,45 @@ void main() {
   setUpAll(() async {
     testBundle = await StringBundle.load();
   });
+  testWidgets(
+    'ring feedback is centered and suppressed feedback stays visible until closed',
+    (tester) async {
+      final fake = FakeFeedback();
+      await start(tester, feedback: fake);
+      await tester.ensureVisible(find.byKey(const ValueKey('gesture-ring')));
+      await tester.tap(find.byKey(const ValueKey('gesture-ring')));
+      await tester.pumpAndSettle();
+      final dialog = find.byKey(const ValueKey('interaction-feedback-dialog'));
+      expect(find.byType(InteractionFeedback), findsOneWidget);
+      expect((tester.getCenter(dialog).dy - 422).abs(), lessThan(2));
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('run-local-feedback')),
+      );
+      await tester.tap(find.byKey(const ValueKey('run-local-feedback')));
+      await tester.pumpAndSettle();
+      expect(find.text('系统静音、勿扰或触觉设置已阻止反馈'), findsOneWidget);
+      expect(find.text('仅在本机预览；未发送给对方'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('close-feedback')));
+      await tester.pumpAndSettle();
+      expect(fake.stopped, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'account and registration forms fit large text on a narrow screen',
+    (tester) async {
+      await start(tester, scale: 2, size: const Size(320, 700));
+      final context = tester.element(find.byType(SpaceShell));
+      openAccount(context);
+      await tester.pumpAndSettle();
+      expect(find.byType(AccountPage), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.ensureVisible(find.widgetWithText(ChoiceChip, '注册'));
+      await tester.tap(find.widgetWithText(ChoiceChip, '注册'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
   for (final theme in CoupleTheme.values) {
     for (final config in [(1.0, 'zh_CN'), (2.0, 'zh_CN'), (2.0, 'en')]) {
       testWidgets(

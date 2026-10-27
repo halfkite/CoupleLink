@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const appVersion = '1.0-r1';
+const appVersion = '1.0-r2';
 const cardIds = [
   'days',
   'interactions',

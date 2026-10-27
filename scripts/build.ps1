@@ -2,6 +2,7 @@ param(
     [string]$FlutterDirectory,
     [string]$JavaDirectory = 'D:\toolchains\jdk17',
     [string]$AndroidSdkDirectory,
+    [string]$GoCommand = 'go',
     [switch]$Preview
 )
 $ErrorActionPreference = 'Stop'
@@ -44,6 +45,7 @@ try {
     Assert-Exit 'Vela dependencies'
     npm.cmd --prefix apps/band-vela run release
     Assert-Exit 'Vela RPK'
+    & "$PSScriptRoot\build-server.ps1" -GoCommand $GoCommand
     node scripts/package-artifacts.mjs
     Assert-Exit 'Artifact packaging'
 } finally { Pop-Location }

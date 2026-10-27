@@ -9,6 +9,34 @@ permissions:
   contents: read
 
 jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: couplelink
+          POSTGRES_DB: couplelink_test
+          POSTGRES_PASSWORD: ci-only-isolated-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U couplelink -d couplelink_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      COUPLELINK_TEST_DATABASE_URL: postgresql://couplelink:ci-only-isolated-password@127.0.0.1:5432/couplelink_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Verify account and relationship transactions
+        working-directory: server
+        run: |
+          go vet ./...
+          go test -count=1 -v ./...
+          CGO_ENABLED=0 go build -trimpath -o couplelink-linux-amd64 ./cmd/couplelink
   verify:
     runs-on: windows-latest
     timeout-minutes: 30

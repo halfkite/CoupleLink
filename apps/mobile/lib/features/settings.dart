@@ -6,6 +6,8 @@ import '../core/strings.dart';
 import '../core/theme.dart';
 import '../ui/widgets.dart';
 import 'home.dart';
+import 'account.dart';
+import '../core/connection.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -14,6 +16,7 @@ class SettingsPage extends ConsumerWidget {
     final s = ref.watch(stringsProvider), c = context.colors;
     final state = ref.watch(settingsProvider),
         controller = ref.read(settingsProvider.notifier);
+    final connection = ref.watch(connectionProvider);
     return ListView(
       key: const PageStorageKey('settings-scroll'),
       padding: EdgeInsets.zero,
@@ -24,31 +27,42 @@ class SettingsPage extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CoupleCard(
-                child: Row(
-                  children: [
-                    const PersonAvatar(partner: false, size: 54),
-                    Transform.translate(
-                      offset: const Offset(-10, 0),
-                      child: const PersonAvatar(partner: true, size: 54),
-                    ),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            s.t('common.couple'),
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            s.t('me.profileHint'),
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
+              Semantics(
+                container: true,
+                button: true,
+                child: CoupleCard(
+                  onTap: () => openAccount(context),
+                  child: Row(
+                    children: [
+                      const PersonAvatar(partner: false, size: 54),
+                      Transform.translate(
+                        offset: const Offset(-10, 0),
+                        child: const PersonAvatar(partner: true, size: 54),
                       ),
-                    ),
-                  ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              connection.signedIn
+                                  ? '${connection.user!['display_name']}'
+                                  : s.t('common.couple'),
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              s.t(
+                                connection.signedIn
+                                    ? 'account.manage'
+                                    : 'account.entry',
+                              ),
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 28),
@@ -247,12 +261,10 @@ class SettingsPage extends ConsumerWidget {
                     SettingTile(
                       icon: Icons.dns_outlined,
                       title: s.t('me.server'),
-                      subtitle: s.t('me.serverHint'),
-                      onTap: () => infoSheet(
-                        context,
-                        s.t('me.server'),
-                        Text(s.t('me.serverHint')),
-                      ),
+                      subtitle: connection.origin.isEmpty
+                          ? s.t('account.entry')
+                          : connection.origin,
+                      onTap: () => openAccount(context),
                     ),
                   ],
                 ),

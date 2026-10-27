@@ -1,0 +1,20 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const revision=Number(process.argv[2]);
+if(!Number.isSafeInteger(revision)||revision<1)throw Error('Specify a positive revision number; the release line remains 1.0.');
+const version=`1.0-r${revision}`,machine=`1.0.0-r${revision}`;
+const edits=new Map();
+function edit(file,replace){const name=path.join(root,file);edits.set(name,replace(fs.readFileSync(name,'utf8')));}
+edit('VERSION',()=>version+'\n');
+for(const file of ['package.json','apps/band-vela/package.json'])edit(file,text=>{const value=JSON.parse(text);value.version=machine;return JSON.stringify(value,null,2)+'\n';});
+for(const file of ['package-lock.json','apps/band-vela/package-lock.json'])edit(file,text=>{const value=JSON.parse(text);value.version=machine;value.packages[''].version=machine;return JSON.stringify(value,null,2)+'\n';});
+edit('server/cmd/couplelink/main.go',text=>text.replace(/var version = "1\.0-r\d+"/,`var version = "${version}"`));
+edit('apps/band-vela/src/manifest.json',text=>{const value=JSON.parse(text);value.versionName=version;value.versionCode=revision;return JSON.stringify(value,null,2)+'\n';});
+edit('apps/mobile/pubspec.yaml',text=>text.replace(/^version: .*$/m,`version: ${machine}+${revision}`));
+edit('apps/mobile/lib/core/state.dart',text=>text.replace(/appVersion = '1\.0-r\d+'/,`appVersion = '${version}'`));
+edit('apps/band-vela/src/common/locales.js',text=>text.replace(/"app.version": "1\.0-r\d+"/g,`"app.version": "${version}"`));
+for(const file of ['apps/mobile/web/manifest.json','apps/mobile/web/index.html'])edit(file,text=>text.replaceAll(/1\.0-r\d+/g,version));
+for(const [name,value]of edits)fs.writeFileSync(name,value);
+console.log(`Set current release to ${version}; existing artifacts are preserved.`);

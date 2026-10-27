@@ -21,6 +21,15 @@ await page.getByRole('button',{name:'首页',exact:true}).waitFor({timeout:30000
 const frame=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
 await frame();
 await page.screenshot({path:path.join(directory,'home-sakura.png')});
+await page.getByRole('button',{name:'响铃',exact:true}).press('Enter');
+await page.getByRole('button',{name:'本机试听',exact:true}).waitFor();
+await frame();
+await page.screenshot({path:path.join(directory,'feedback-ring.png')});
+await page.getByRole('button',{name:'本机试听',exact:true}).press('Enter');
+await page.getByText('当前设备或浏览器不支持此项本机反馈',{exact:true}).first().waitFor();
+await frame();
+await page.screenshot({path:path.join(directory,'feedback-browser-result.png')});
+await page.getByRole('button',{name:'关闭',exact:true}).press('Enter');
 console.log((await page.locator('body').innerText()).slice(0,1200));
 for(const [label,file] of [['地图','map'],['消息','messages'],['时光','memories'],['我的','settings']]){
   await page.getByRole('button',{name:label,exact:true}).press('Enter');

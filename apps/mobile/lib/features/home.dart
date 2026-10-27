@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/state.dart';
+import '../core/connection.dart';
 import '../core/strings.dart';
 import '../core/theme.dart';
 import '../ui/widgets.dart';
@@ -103,6 +104,11 @@ class _DaysCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final s = ref.watch(stringsProvider), c = context.colors;
+    final connection = ref.watch(connectionProvider),
+        couple = ref.watch(connectionProvider).couple;
+    final names = couple == null
+        ? s.t('common.couple')
+        : '${connection.user!['display_name']} & ${(couple['partner'] as Map)['display_name']}';
     return ClipRRect(
       borderRadius: BorderRadius.circular(26),
       child: DecoratedBox(
@@ -141,7 +147,7 @@ class _DaysCard extends ConsumerWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              s.t('common.couple'),
+                              names,
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
@@ -175,7 +181,7 @@ class _DaysCard extends ConsumerWidget {
                     spacing: 10,
                     children: [
                       Text(
-                        '365',
+                        couple == null ? '365' : '${couple['days_together']}',
                         style: TextStyle(
                           fontSize: 76,
                           height: 1.2,
@@ -195,7 +201,11 @@ class _DaysCard extends ConsumerWidget {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    s.t('home.daysFoot'),
+                    couple == null
+                        ? s.t('home.daysFoot')
+                        : s.t('account.realStart', {
+                            'date': '${couple['start_at']}',
+                          }),
                     style: TextStyle(
                       fontSize: 11,
                       color: c.ink.withValues(alpha: .65),
@@ -217,7 +227,13 @@ class _DaysCard extends ConsumerWidget {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            s.t('home.anniversary'),
+                            couple == null
+                                ? s.t('home.anniversary')
+                                : s.t(
+                                    connection.error == null
+                                        ? 'account.bound'
+                                        : 'account.cached',
+                                  ),
                             style: TextStyle(fontSize: 11, color: c.ink),
                           ),
                         ),
@@ -258,7 +274,7 @@ class _InteractionsCard extends ConsumerWidget {
               spacing: 8,
               runSpacing: 12,
               children: [
-                for (final id in actionIcons.keys)
+                for (final id in remoteActionIds)
                   SizedBox(
                     width: (bounds.maxWidth - 24) / 4,
                     child: Semantics(
@@ -308,6 +324,16 @@ class _InteractionsCard extends ConsumerWidget {
                     ),
                   ),
               ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              key: const ValueKey('gesture-vibrate'),
+              onPressed: () => previewGesture(context, s, 'vibrate'),
+              icon: const Icon(Icons.vibration_rounded, size: 19),
+              label: Text(s.t('feedback.vibrationTest')),
             ),
           ),
         ],

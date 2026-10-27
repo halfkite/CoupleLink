@@ -1,0 +1,719 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"couplelink/server/migrations"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type Config struct {
+	SetupCode      string
+	Version        string
+	AllowedOrigins []string
+}
+type Server struct {
+	db        *pgxpool.Pool
+	cfg       Config
+	dummyHash string
+	limiter   authLimiter
+	hashSlots chan struct{}
+}
+type User struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+}
+type Couple struct {
+	ID       string `json:"id"`
+	Partner  User   `json:"partner"`
+	StartAt  string `json:"start_at"`
+	Timezone string `json:"timezone"`
+	Version  int64  `json:"version"`
+	Days     int    `json:"days_together"`
+}
+type identity struct {
+	User                User
+	SessionID, DeviceID string
+}
+type problem struct {
+	status int
+	code   string
+}
+
+func (p *problem) Error() string         { return p.code }
+func fail(status int, code string) error { return &problem{status, code} }
+
+var usernamePattern = regexp.MustCompile(`^[a-z0-9_-]{3,32}$`)
+var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+func Migrate(ctx context.Context, db *pgxpool.Pool) error {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('couplelink.schema'))`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations(version integer PRIMARY KEY)`); err != nil {
+		return err
+	}
+	var current int
+	if err = tx.QueryRow(ctx, `SELECT COALESCE(max(version),0) FROM schema_migrations`).Scan(&current); err != nil {
+		return err
+	}
+	if current > 1 {
+		return errors.New("unsupported schema version")
+	}
+	if current == 0 {
+		if _, err = tx.Exec(ctx, migrations.Accounts); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(1)`); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+func New(db *pgxpool.Pool, cfg Config) (*Server, error) {
+	dummy, err := hashPassword("constant dummy password for timing")
+	if err != nil {
+		return nil, err
+	}
+	return &Server{db: db, cfg: cfg, dummyHash: dummy, limiter: authLimiter{entries: map[string]rateEntry{}}, hashSlots: make(chan struct{}, 2)}, nil
+}
+
+type endpoint func(http.ResponseWriter, *http.Request) error
+
+func write(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(value)
+}
+func decode(w http.ResponseWriter, r *http.Request, value any) error {
+	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+		return fail(415, "json_required")
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	d := json.NewDecoder(r.Body)
+	d.DisallowUnknownFields()
+	if err := d.Decode(value); err != nil {
+		return fail(400, "invalid_input")
+	}
+	if err := d.Decode(new(any)); err != io.EOF {
+		return fail(400, "invalid_input")
+	}
+	return nil
+}
+func (s *Server) wrap(fn endpoint) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		r = r.WithContext(ctx)
+		if err := fn(w, r); err != nil {
+			var p *problem
+			var pe *pgconn.PgError
+			switch {
+			case errors.As(err, &p):
+				write(w, p.status, map[string]string{"code": p.code})
+			case errors.As(err, &pe) && pe.Code == "23505":
+				write(w, 409, map[string]string{"code": "conflict"})
+			default:
+				write(w, 500, map[string]string{"code": "server_error"})
+			}
+		}
+	}
+}
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", s.wrap(s.health))
+	mux.HandleFunc("POST /auth/register", s.wrap(s.register))
+	mux.HandleFunc("POST /auth/login", s.wrap(s.login))
+	mux.HandleFunc("POST /auth/logout", s.wrap(s.logout))
+	mux.HandleFunc("GET /account", s.wrap(s.account))
+	mux.HandleFunc("GET /couples/current", s.wrap(s.current))
+	mux.HandleFunc("POST /couples/invitations", s.wrap(s.invite))
+	mux.HandleFunc("POST /couples/join", s.wrap(s.join))
+	mux.HandleFunc("DELETE /couples/current", s.wrap(s.unbind))
+	mux.HandleFunc("GET /devices", s.wrap(s.devices))
+	mux.HandleFunc("DELETE /devices/{id}", s.wrap(s.revokeDevice))
+	mux.HandleFunc("GET /sync/changes", s.wrap(s.changes))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-CoupleLink-API", "1")
+		if origin := r.Header.Get("Origin"); origin != "" {
+			allowed := false
+			for _, value := range s.cfg.AllowedOrigins {
+				if value == origin {
+					allowed = true
+				}
+			}
+			if !allowed {
+				write(w, 403, map[string]string{"code": "origin_not_allowed"})
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(204)
+				return
+			}
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+func (s *Server) health(w http.ResponseWriter, r *http.Request) error {
+	if err := s.db.Ping(r.Context()); err != nil {
+		return fail(503, "database_unavailable")
+	}
+	write(w, 200, map[string]any{"status": "ok", "api_version": 1, "version": s.cfg.Version})
+	return nil
+}
+func (s *Server) auth(r *http.Request) (identity, error) {
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if len(token) != 43 || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+		return identity{}, fail(401, "unauthorized")
+	}
+	var id identity
+	err := s.db.QueryRow(r.Context(), `SELECT u.id::text,u.username,u.display_name,s.id::text,d.id::text
+  FROM sessions s JOIN users u ON u.id=s.user_id JOIN devices d ON d.id=s.device_id AND d.user_id=u.id
+  WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now() AND d.revoked_at IS NULL`, tokenHash(token)).Scan(
+		&id.User.ID, &id.User.Username, &id.User.DisplayName, &id.SessionID, &id.DeviceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return id, fail(401, "unauthorized")
+	}
+	return id, err
+}
+
+type authInput struct {
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	DisplayName string `json:"display_name,omitempty"`
+	SetupCode   string `json:"setup_code,omitempty"`
+	DeviceID    string `json:"device_id"`
+	DeviceLabel string `json:"device_label"`
+	Platform    string `json:"platform"`
+}
+
+func validText(text string, max int) bool {
+	if !utf8.ValidString(text) || utf8.RuneCountInString(text) > max || strings.TrimSpace(text) == "" {
+		return false
+	}
+	for _, r := range text {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+func (s *Server) authRequest(w http.ResponseWriter, r *http.Request) (authInput, error) {
+	var input authInput
+	if err := decode(w, r, &input); err != nil {
+		return input, err
+	}
+	input.Username = strings.ToLower(strings.TrimSpace(input.Username))
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if !s.limiter.allow(host) {
+		return input, fail(429, "rate_limited")
+	}
+	if !usernamePattern.MatchString(input.Username) || !uuidPattern.MatchString(input.DeviceID) || !validText(input.DeviceLabel, 64) || !validText(input.Platform, 24) || utf8.RuneCountInString(input.Password) < 12 || utf8.RuneCountInString(input.Password) > 128 || !utf8.ValidString(input.Password) {
+		return input, fail(400, "invalid_input")
+	}
+	return input, nil
+}
+func (s *Server) reserveHash() bool {
+	select {
+	case s.hashSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+func (s *Server) register(w http.ResponseWriter, r *http.Request) error {
+	input, err := s.authRequest(w, r)
+	if err != nil {
+		return err
+	}
+	if len(s.cfg.SetupCode) < 24 || !secretEqual(input.SetupCode, s.cfg.SetupCode) {
+		return fail(403, "registration_closed")
+	}
+	if !validText(input.DisplayName, 40) {
+		return fail(400, "invalid_input")
+	}
+	if !s.reserveHash() {
+		return fail(429, "rate_limited")
+	}
+	defer func() { <-s.hashSlots }()
+	hash, err := hashPassword(input.Password)
+	if err != nil {
+		return err
+	}
+	id, err := identifier()
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(r.Context())
+	if _, err = tx.Exec(r.Context(), `SELECT id FROM registration_gate WHERE id=1 FOR UPDATE`); err != nil {
+		return err
+	}
+	var count int
+	if err = tx.QueryRow(r.Context(), `SELECT count(*) FROM users`).Scan(&count); err != nil {
+		return err
+	}
+	if count >= 2 {
+		return fail(409, "account_limit")
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO users(id,username,display_name,password_hash) VALUES($1,$2,$3,$4)`, id, input.Username, input.DisplayName, hash); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO sync_heads(user_id) VALUES($1)`, id); err != nil {
+		return err
+	}
+	token, expires, err := s.newSession(r.Context(), tx, id, input)
+	if err != nil {
+		return err
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	write(w, 201, map[string]any{"token": token, "expires_at": expires, "user": User{id, input.Username, input.DisplayName}})
+	return nil
+}
+func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
+	input, err := s.authRequest(w, r)
+	if err != nil {
+		return err
+	}
+	if !s.reserveHash() {
+		return fail(429, "rate_limited")
+	}
+	defer func() { <-s.hashSlots }()
+	var user User
+	var hash string
+	err = s.db.QueryRow(r.Context(), `SELECT id::text,username,display_name,password_hash FROM users WHERE username=$1`, input.Username).Scan(&user.ID, &user.Username, &user.DisplayName, &hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		verifyPassword(s.dummyHash, input.Password)
+		return fail(401, "invalid_credentials")
+	}
+	if err != nil {
+		return err
+	}
+	if !verifyPassword(hash, input.Password) {
+		return fail(401, "invalid_credentials")
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(r.Context())
+	token, expires, err := s.newSession(r.Context(), tx, user.ID, input)
+	if err != nil {
+		return err
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	write(w, 200, map[string]any{"token": token, "expires_at": expires, "user": user})
+	return nil
+}
+func (s *Server) newSession(ctx context.Context, tx pgx.Tx, user string, input authInput) (string, time.Time, error) {
+	tag, err := tx.Exec(ctx, `INSERT INTO devices(id,user_id,label,platform) VALUES($1,$2,$3,$4)
+  ON CONFLICT(id) DO UPDATE SET label=excluded.label,platform=excluded.platform,last_seen=now(),revoked_at=NULL
+  WHERE devices.user_id=excluded.user_id`, input.DeviceID, user, input.DeviceLabel, input.Platform)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if tag.RowsAffected() != 1 {
+		return "", time.Time{}, fail(409, "device_in_use")
+	}
+	if _, err = tx.Exec(ctx, `UPDATE sessions SET revoked_at=now() WHERE user_id=$1 AND device_id=$2 AND revoked_at IS NULL`, user, input.DeviceID); err != nil {
+		return "", time.Time{}, err
+	}
+	id, err := identifier()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	token, err := randomToken()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	expires := time.Now().UTC().Add(30 * 24 * time.Hour)
+	_, err = tx.Exec(ctx, `INSERT INTO sessions(id,user_id,device_id,token_hash,expires_at) VALUES($1,$2,$3,$4,$5)`, id, user, input.DeviceID, tokenHash(token), expires)
+	return token, expires, err
+}
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) error {
+	id, err := s.auth(r)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(r.Context(), `UPDATE sessions SET revoked_at=now() WHERE id=$1`, id.SessionID)
+	if err == nil {
+		write(w, 200, map[string]bool{"ok": true})
+	}
+	return err
+}
+func (s *Server) account(w http.ResponseWriter, r *http.Request) error {
+	id, err := s.auth(r)
+	if err != nil {
+		return err
+	}
+	couple, err := s.readCouple(r.Context(), id.User.ID)
+	if err != nil {
+		return err
+	}
+	write(w, 200, map[string]any{"user": id.User, "couple": couple, "device_id": id.DeviceID})
+	return nil
+}
+func (s *Server) current(w http.ResponseWriter, r *http.Request) error {
+	id, err := s.auth(r)
+	if err != nil {
+		return err
+	}
+	couple, err := s.readCouple(r.Context(), id.User.ID)
+	if err == nil {
+		write(w, 200, map[string]any{"couple": couple})
+	}
+	return err
+}
+func (s *Server) readCouple(ctx context.Context, user string) (*Couple, error) {
+	var c Couple
+	var date time.Time
+	err := s.db.QueryRow(ctx, `SELECT c.id::text,c.start_at,c.timezone,c.version,u.id::text,u.username,u.display_name
+  FROM couple_members m JOIN couples c ON c.id=m.couple_id AND c.status='active'
+  JOIN users u ON u.id=CASE WHEN c.user_a=$1 THEN c.user_b ELSE c.user_a END WHERE m.user_id=$1`, user).Scan(
+		&c.ID, &date, &c.Timezone, &c.Version, &c.Partner.ID, &c.Partner.Username, &c.Partner.DisplayName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	c.StartAt = date.Format(time.DateOnly)
+	zone, err := time.LoadLocation(c.Timezone)
+	if err != nil {
+		return nil, err
+	}
+	today := time.Now().In(zone)
+	localDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+	c.Days = int(localDate.Sub(date.UTC()).Hours() / 24)
+	return &c, nil
+}
+func lockUsers(ctx context.Context, tx pgx.Tx, ids ...string) error {
+	sort.Strings(ids)
+	for _, id := range ids {
+		if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func unbound(ctx context.Context, tx pgx.Tx, user string) error {
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM couple_members WHERE user_id=$1)`, user).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return fail(409, "already_bound")
+	}
+	return nil
+}
+func event(ctx context.Context, tx pgx.Tx, kind, ref string, ids ...string) error {
+	sort.Strings(ids)
+	for _, id := range ids {
+		var seq int64
+		if err := tx.QueryRow(ctx, `UPDATE sync_heads SET seq=seq+1 WHERE user_id=$1 RETURNING seq`, id).Scan(&seq); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO sync_events(user_id,seq,event_type,ref_id) VALUES($1,$2,$3,$4)`, id, seq, kind, ref); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (s *Server) invite(w http.ResponseWriter, r *http.Request) error {
+	id, err := s.auth(r)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(r.Context())
+	if err = lockUsers(r.Context(), tx, id.User.ID); err != nil {
+		return err
+	}
+	if err = unbound(r.Context(), tx, id.User.ID); err != nil {
+		return err
+	}
+	token, err := randomToken()
+	if err != nil {
+		return err
+	}
+	inviteID, err := identifier()
+	if err != nil {
+		return err
+	}
+	expires := time.Now().UTC().Add(15 * time.Minute)
+	if _, err = tx.Exec(r.Context(), `UPDATE invitations SET revoked_at=now() WHERE creator_id=$1 AND used_at IS NULL AND revoked_at IS NULL`, id.User.ID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO invitations(id,creator_id,token_hash,expires_at) VALUES($1,$2,$3,$4)`, inviteID, id.User.ID, tokenHash(token), expires); err != nil {
+		return err
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	write(w, 201, map[string]any{"token": token, "expires_at": expires})
+	return nil
+}
+func (s *Server) join(w http.ResponseWriter, r *http.Request) error {
+	id, err := s.auth(r)
+	if err != nil {
+		return err
+	}
+	var input struct {
+		Token    string `json:"token"`
+		StartAt  string `json:"start_at"`
+		Timezone string `json:"timezone"`
+	}
+	if err = decode(w, r, &input); err != nil {
+		return err
+	}
+	if len(input.Token) != 43 {
+		return fail(400, "invalid_invitation")
+	}
+	zone, err := time.LoadLocation(input.Timezone)
+	if err != nil || input.Timezone == "" {
+		return fail(400, "invalid_input")
+	}
+	start, err := time.Parse(time.DateOnly, input.StartAt)
+	if err != nil || input.StartAt > time.Now().In(zone).Format(time.DateOnly) {
+		return fail(400, "invalid_input")
+	}
+	var creator string
+	err = s.db.QueryRow(r.Context(), `SELECT creator_id::text FROM invitations WHERE token_hash=$1`, tokenHash(input.Token)).Scan(&creator)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fail(400, "invalid_invitation")
+	}
+	if err != nil {
+		return err
+	}
+	if creator == id.User.ID {
+		return fail(400, "self_invitation")
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(r.Context())
+	if err = lockUsers(r.Context(), tx, creator, id.User.ID); err != nil {
+		return err
+	}
+	for _, user := range []string{creator, id.User.ID} {
+		if err = unbound(r.Context(), tx, user); err != nil {
+			return err
+		}
+	}
+	var valid bool
+	err = tx.QueryRow(r.Context(), `SELECT expires_at>now() AND used_at IS NULL AND revoked_at IS NULL FROM invitations WHERE token_hash=$1 FOR UPDATE`, tokenHash(input.Token)).Scan(&valid)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return fail(400, "invalid_invitation")
+	}
+	coupleID, err := identifier()
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO couples(id,user_a,user_b,start_at,timezone,status) VALUES($1,$2,$3,$4,$5,'active')`, coupleID, creator, id.User.ID, start, input.Timezone); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO couple_members(user_id,couple_id) VALUES($1,$3),($2,$3)`, creator, id.User.ID, coupleID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(r.Context(), `UPDATE invitations SET used_at=now() WHERE token_hash=$1`, tokenHash(input.Token)); err != nil {
+		return err
+	}
+	if err = event(r.Context(), tx, "couple.bound", coupleID, creator, id.User.ID); err != nil {
+		return err
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	couple, err := s.readCouple(r.Context(), id.User.ID)
+	if err == nil {
+		write(w, 201, map[string]any{"couple": couple})
+	}
+	return err
+}
+func (s *Server) unbind(w http.ResponseWriter, r *http.Request) error {
+	id, err := s.auth(r)
+	if err != nil {
+		return err
+	}
+	var input struct {
+		Version int64 `json:"version"`
+	}
+	if err = decode(w, r, &input); err != nil {
+		return err
+	}
+	var coupleID, a, b string
+	err = s.db.QueryRow(r.Context(), `SELECT c.id::text,c.user_a::text,c.user_b::text FROM couple_members m JOIN couples c ON c.id=m.couple_id WHERE m.user_id=$1`, id.User.ID).Scan(&coupleID, &a, &b)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fail(409, "not_bound")
+	}
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(r.Context())
+	if err = lockUsers(r.Context(), tx, a, b); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(r.Context(), `UPDATE couples SET status='ended',version=version+1 WHERE id=$1 AND status='active' AND version=$2`, coupleID, input.Version)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fail(409, "version_conflict")
+	}
+	if _, err = tx.Exec(r.Context(), `DELETE FROM couple_members WHERE couple_id=$1`, coupleID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(r.Context(), `UPDATE invitations SET revoked_at=now() WHERE creator_id IN ($1,$2) AND used_at IS NULL AND revoked_at IS NULL`, a, b); err != nil {
+		return err
+	}
+	if err = event(r.Context(), tx, "couple.unbound", coupleID, a, b); err != nil {
+		return err
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	write(w, 200, map[string]bool{"ok": true})
+	return nil
+}
+func (s *Server) devices(w http.ResponseWriter, r *http.Request) error {
+	id, err := s.auth(r)
+	if err != nil {
+		return err
+	}
+	rows, err := s.db.Query(r.Context(), `SELECT id::text,label,platform,last_seen FROM devices WHERE user_id=$1 AND revoked_at IS NULL ORDER BY last_seen DESC`, id.User.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	values := []map[string]any{}
+	for rows.Next() {
+		var deviceID, label, platform string
+		var seen time.Time
+		if err = rows.Scan(&deviceID, &label, &platform, &seen); err != nil {
+			return err
+		}
+		values = append(values, map[string]any{"id": deviceID, "label": label, "platform": platform, "last_seen": seen, "current": deviceID == id.DeviceID})
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	write(w, 200, map[string]any{"devices": values})
+	return nil
+}
+func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) error {
+	id, err := s.auth(r)
+	if err != nil {
+		return err
+	}
+	device := r.PathValue("id")
+	if !uuidPattern.MatchString(device) {
+		return fail(400, "invalid_input")
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(r.Context())
+	tag, err := tx.Exec(r.Context(), `UPDATE devices SET revoked_at=now() WHERE id=$1 AND user_id=$2`, device, id.User.ID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fail(404, "device_not_found")
+	}
+	if _, err = tx.Exec(r.Context(), `UPDATE sessions SET revoked_at=now() WHERE device_id=$1 AND user_id=$2`, device, id.User.ID); err != nil {
+		return err
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	write(w, 200, map[string]bool{"ok": true})
+	return nil
+}
+func (s *Server) changes(w http.ResponseWriter, r *http.Request) error {
+	id, err := s.auth(r)
+	if err != nil {
+		return err
+	}
+	cursor := int64(0)
+	if value := r.URL.Query().Get("cursor"); value != "" {
+		cursor, err = strconv.ParseInt(value, 10, 64)
+		if err != nil || cursor < 0 {
+			return fail(400, "invalid_cursor")
+		}
+	}
+	var head int64
+	if err = s.db.QueryRow(r.Context(), `SELECT seq FROM sync_heads WHERE user_id=$1`, id.User.ID).Scan(&head); err != nil {
+		return err
+	}
+	if cursor > head {
+		return fail(400, "invalid_cursor")
+	}
+	rows, err := s.db.Query(r.Context(), `SELECT seq,event_type,ref_id::text,created_at FROM sync_events WHERE user_id=$1 AND seq>$2 ORDER BY seq LIMIT 100`, id.User.ID, cursor)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	events := []map[string]any{}
+	next := cursor
+	for rows.Next() {
+		var seq int64
+		var kind, ref string
+		var created time.Time
+		if err = rows.Scan(&seq, &kind, &ref, &created); err != nil {
+			return err
+		}
+		events = append(events, map[string]any{"seq": seq, "type": kind, "ref_id": ref, "created_at": created})
+		next = seq
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	write(w, 200, map[string]any{"events": events, "next_cursor": next, "has_more": len(events) == 100})
+	return nil
+}

@@ -10,6 +10,11 @@ const match=/^1\.0-r([1-9]\d*)$/.exec(version);
 assert.ok(match,'Version must remain 1.0-rN until the user changes the release line.');
 const revision=Number(match[1]);
 assert.equal(json('package.json').version,`1.0.0-r${revision}`);
+for(const file of ['package-lock.json','apps/band-vela/package-lock.json']) {
+  assert.equal(json(file).version,`1.0.0-r${revision}`);
+  assert.equal(json(file).packages[''].version,`1.0.0-r${revision}`);
+}
+assert.ok(read('server/cmd/couplelink/main.go').includes(`var version = "${version}"`));
 assert.ok(read('apps/mobile/pubspec.yaml').includes(`version: 1.0.0-r${revision}+${revision}`));
 assert.ok(read('apps/mobile/lib/core/state.dart').includes(`appVersion = '${version}'`));
 const manifest=json('apps/band-vela/src/manifest.json');
