@@ -35,10 +35,12 @@ class PageHeading extends ConsumerWidget {
     required this.title,
     required this.subtitle,
     this.trailing,
+    this.showPreviewBadge = true,
     this.padding = const EdgeInsets.fromLTRB(20, 16, 20, 24),
   });
   final String title, subtitle;
   final Widget? trailing;
+  final bool showPreviewBadge;
   final EdgeInsetsGeometry padding;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -69,7 +71,7 @@ class PageHeading extends ConsumerWidget {
                   ),
                 ),
               ),
-              const Flexible(child: PreviewBadge()),
+              if (showPreviewBadge) const Flexible(child: PreviewBadge()),
               ?trailing,
             ],
           ),

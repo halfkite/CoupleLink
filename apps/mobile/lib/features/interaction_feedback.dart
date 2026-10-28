@@ -20,8 +20,15 @@ Future<void> previewGesture(
 );
 
 class InteractionFeedback extends ConsumerStatefulWidget {
-  const InteractionFeedback({super.key, required this.action});
+  const InteractionFeedback({
+    super.key,
+    required this.action,
+    this.received = false,
+    this.receivedOutcome,
+  });
   final String action;
+  final bool received;
+  final FeedbackOutcome? receivedOutcome;
   @override
   ConsumerState<InteractionFeedback> createState() =>
       _InteractionFeedbackState();
@@ -41,6 +48,7 @@ class _InteractionFeedbackState extends ConsumerState<InteractionFeedback>
   void initState() {
     super.initState();
     device = ref.read(deviceFeedbackProvider);
+    outcome = widget.receivedOutcome;
   }
 
   @override
@@ -85,6 +93,8 @@ class _InteractionFeedbackState extends ConsumerState<InteractionFeedback>
         ? 'feedback.pending'
         : outcome == null
         ? 'feedback.ready'
+        : widget.received
+        ? 'interaction.result.${outcome!.name}'
         : 'feedback.${outcome!.name}';
     return Dialog(
       key: const ValueKey('interaction-feedback-dialog'),
@@ -106,7 +116,11 @@ class _InteractionFeedbackState extends ConsumerState<InteractionFeedback>
                   children: [
                     Expanded(
                       child: Text(
-                        s.t('feedback.localBadge'),
+                        s.t(
+                          widget.received
+                              ? 'interaction.receivedBadge'
+                              : 'feedback.localBadge',
+                        ),
                         style: TextStyle(
                           color: c.accent,
                           fontSize: 13,
@@ -196,11 +210,15 @@ class _InteractionFeedbackState extends ConsumerState<InteractionFeedback>
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  s.t('interaction.previewHint'),
+                  s.t(
+                    widget.received
+                        ? 'interaction.receivedHint'
+                        : 'interaction.previewHint',
+                  ),
                   textAlign: TextAlign.center,
                   style: TextStyle(color: c.muted, fontSize: 13, height: 1.6),
                 ),
-                if (local) ...[
+                if (local && !widget.received) ...[
                   const SizedBox(height: 20),
                   FilledButton.icon(
                     key: const ValueKey('run-local-feedback'),

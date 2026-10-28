@@ -8,6 +8,8 @@ import '../ui/widgets.dart';
 import 'home.dart';
 import 'account.dart';
 import '../core/connection.dart';
+import 'notification_settings.dart';
+import 'server_addresses.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -239,6 +241,19 @@ class SettingsPage extends ConsumerWidget {
                       value: state.reduceMotion,
                       onChanged: controller.motion,
                     ),
+                    SwitchListTile(
+                      title: Text(s.t('interaction.allowVibration')),
+                      subtitle: Text(s.t('interaction.allowVibrationHint')),
+                      value: state.allowInteractionVibration,
+                      onChanged: controller.interactionVibration,
+                    ),
+                    SwitchListTile(
+                      title: Text(s.t('interaction.allowSound')),
+                      subtitle: Text(s.t('interaction.allowSoundHint')),
+                      value: state.allowInteractionSound,
+                      onChanged: controller.interactionSound,
+                    ),
+                    const NotificationSettings(),
                     Divider(color: c.line),
                     SettingTile(
                       icon: Icons.shield_outlined,
@@ -264,7 +279,11 @@ class SettingsPage extends ConsumerWidget {
                       subtitle: connection.origin.isEmpty
                           ? s.t('account.entry')
                           : connection.origin,
-                      onTap: () => openAccount(context),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const ServerAddressesPage(),
+                        ),
+                      ),
                     ),
                   ],
                 ),

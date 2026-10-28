@@ -1,8 +1,8 @@
 {
   "package": "app.couplelink.mobile",
   "name": "CoupleLink",
-  "versionName": "1.0-r3",
-  "versionCode": 3,
+  "versionName": "1.0-r9",
+  "versionCode": 9,
   "minPlatformVersion": 1200,
   "icon": "/common/icon.png",
   "deviceTypeList": [

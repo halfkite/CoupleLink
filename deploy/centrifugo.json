@@ -1,0 +1,9 @@
+{
+  "client": {
+    "token": {"audience": "couplelink-realtime", "issuer": "couplelink"}
+  },
+  "channel": {
+    "namespaces": [{"name": "events", "history_size": 100, "history_ttl": "300s", "force_recovery": true}]
+  },
+  "log": {"level": "error"}
+}

@@ -1,0 +1,23 @@
+CoupleLink Noncommercial Source License 1.0
+Copyright (c) 2026 halfkite, original author of CoupleLink.
+
+1. Permission
+Subject to this license, you may use, inspect, copy, modify, and distribute the original CoupleLink code solely for noncommercial purposes. You must retain this license, copyright notices, and attribution, and identify your modifications. Distributions and derivative works containing this code must retain these noncommercial restrictions.
+
+2. Commercial use reserved to the original author
+Only the original author, halfkite, may commercially use or commercially license the original CoupleLink code. Everyone else requires the original author's separate written permission for any commercial use. Commercial use includes selling copies or derivative works, paid hosting or SaaS, paid integration or deployment, advertising or sponsorship-supported distribution, bundling with paid products, and use in revenue-generating business operations. Merely publishing source code does not grant commercial permission.
+
+3. Ownership
+No ownership or trademark rights are transferred. This license does not grant the original author ownership of third-party contributions. Contributors must hold the necessary rights and separately agree to any commercial licensing of their contributions.
+
+4. Third-party material
+Third-party software, fonts, assets, and dependencies retain their respective licenses. This license applies only to material whose copyright holders have authorized its release under this license; it does not replace or restrict rights granted by third-party licenses. See docs/THIRD_PARTY.md and accompanying notices.
+
+5. Termination
+Permissions terminate upon breach. Stop use and distribution unless the original author grants written reinstatement.
+
+6. Disclaimer
+THE SOFTWARE IS PROVIDED AS IS, WITHOUT WARRANTY OF ANY KIND, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. TO THE EXTENT PERMITTED BY LAW, THE COPYRIGHT HOLDERS ARE NOT LIABLE FOR CLAIMS OR DAMAGES ARISING FROM THE SOFTWARE OR ITS USE.
+
+Chinese summary (English terms above govern):
+除原作者 halfkite 外，其他人仅可非商业使用、修改和分发 CoupleLink 原创代码，须保留本许可证与署名，衍生版本也须保留非商业限制。其他人的商业使用须取得原作者另行书面许可。第三方依赖及素材继续适用各自许可证。本协议属于源码可见的非商业许可证，不是 OSI 意义上的开源许可证。

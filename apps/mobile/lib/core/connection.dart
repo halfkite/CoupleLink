@@ -56,6 +56,9 @@ class ApiException implements Exception {
   final String code;
 }
 
+const minimumPasswordLength = 8;
+const maximumPasswordLength = 128;
+
 abstract interface class SessionVault {
   Future<String?> read();
   Future<void> write(String value);
@@ -129,17 +132,52 @@ String normalizeOrigin(
       uri.hasQuery ||
       uri.hasFragment ||
       (uri.path.isNotEmpty && uri.path != '/') ||
-      (uri.scheme != 'https' &&
-          !(uri.scheme == 'http' &&
-              (['127.0.0.1', 'localhost', '10.0.2.2'].contains(uri.host) ||
-                  (isPrivateIPv4(uri.host) &&
-                      localHttpHosts
-                          .split(',')
-                          .map((host) => host.trim())
-                          .contains(uri.host)))))) {
+      (uri.scheme != 'https' && uri.scheme != 'http')) {
+    throw const ApiException('invalid_server_address');
+  }
+  if (uri.scheme == 'http' &&
+      !(['127.0.0.1', 'localhost', '10.0.2.2'].contains(uri.host) ||
+          (isPrivateIPv4(uri.host) &&
+              localHttpHosts
+                  .split(',')
+                  .map((host) => host.trim())
+                  .contains(uri.host)))) {
     throw const ApiException('https_required');
   }
   return uri.replace(path: '').toString();
+}
+
+/// Probe the entered server without sending credentials or changing sessions.
+Future<void> testServerConnection(
+  http.Client client,
+  String input, {
+  String localHttpHosts = configuredLocalHttpHosts,
+}) async {
+  final origin = normalizeOrigin(input, localHttpHosts: localHttpHosts);
+  final request = http.Request('GET', Uri.parse('$origin/healthz'))
+    ..followRedirects = false;
+  final response = await client
+      .send(request)
+      .timeout(const Duration(seconds: 10));
+  if (response.statusCode != 200) {
+    await response.stream.listen((_) {}).cancel();
+    throw const ApiException('server_unreachable');
+  }
+  final bytes = <int>[];
+  await for (final chunk in response.stream.timeout(
+    const Duration(seconds: 10),
+  )) {
+    bytes.addAll(chunk);
+    if (bytes.length > 8192) throw const ApiException('incompatible_server');
+  }
+  try {
+    final data = jsonDecode(utf8.decode(bytes));
+    if (data is! Map || data['status'] != 'ok' || data['api_version'] != 1) {
+      throw const ApiException('incompatible_server');
+    }
+  } on FormatException {
+    throw const ApiException('incompatible_server');
+  }
 }
 
 String newDeviceID() {
@@ -156,6 +194,7 @@ String newDeviceID() {
 class ConnectionController extends Notifier<ConnectionState> {
   String? _token;
   int _generation = 0;
+  Future<void>? _pendingOperation;
   @override
   ConnectionState build() {
     final origin =
@@ -166,6 +205,12 @@ class ConnectionController extends Notifier<ConnectionState> {
 
   Future<void> _restore() async {
     try {
+      if (ref
+              .read(preferencesProvider)
+              .getBool('couplelink.session.disabled.v1') ==
+          true) {
+        return;
+      }
       final raw = await ref.read(vaultProvider).read();
       if (raw == null || !ref.mounted) return;
       final data = jsonDecode(raw) as Map;
@@ -174,7 +219,20 @@ class ConnectionController extends Notifier<ConnectionState> {
         return;
       }
       _token = data['token'] as String;
-      await refresh();
+      normalizeOrigin(state.origin);
+      if (data['user'] != null) {
+        final user = Map<String, dynamic>.from(data['user'] as Map);
+        final couple = data['couple'] == null
+            ? null
+            : Map<String, dynamic>.from(data['couple'] as Map);
+        validateAccountSnapshot(user, couple);
+        state = state.copy(
+          user: user,
+          couple: couple,
+          clearCouple: couple == null,
+        );
+      }
+      await refresh(quiet: true);
     } catch (_) {
       if (ref.mounted) state = state.copy(error: 'session_restore_failed');
     }
@@ -185,6 +243,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     String path, {
     Map<String, dynamic>? body,
     bool auth = true,
+    int responseLimit = 256 * 1024,
   }) async {
     final client = ref.read(httpProvider);
     final req = http.Request(method, Uri.parse('${state.origin}$path'));
@@ -207,7 +266,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       const Duration(seconds: 10),
     )) {
       count += chunk.length;
-      if (count > 256 * 1024) throw const ApiException('invalid_response');
+      if (count > responseLimit) throw const ApiException('invalid_response');
       bytes.addAll(chunk);
     }
     dynamic data;
@@ -227,47 +286,63 @@ class ConnectionController extends Notifier<ConnectionState> {
     return data;
   }
 
-  Future<void> _perform(Future<void> Function() operation) async {
-    if (state.busy) return;
-    final generation = ++_generation;
-    state = state.copy(busy: true);
+  Future<void> _perform(
+    Future<void> Function() operation, {
+    bool quiet = false,
+  }) async {
+    final previous = _pendingOperation, done = Completer<void>();
+    _pendingOperation = done.future;
     try {
-      await operation();
-      if (ref.mounted && generation == _generation) {
-        state = state.copy(busy: false, invitation: state.invitation);
-      }
-    } catch (error) {
-      if (!ref.mounted || generation != _generation) return;
-      var code = error is ApiException
-          ? error.code
-          : error is TimeoutException
-          ? 'network_timeout'
-          : error is PlatformException || error is MissingPluginException
-          ? 'secure_storage_failed'
-          : 'network_failed';
-      if (error is FormatException || error is TypeError) {
-        code = 'invalid_response';
-      }
-      if (code == 'unauthorized') {
-        _token = null;
-        try {
-          await ref.read(vaultProvider).clear();
-        } on PlatformException {
-          code = 'secure_storage_failed';
-        } on MissingPluginException {
-          code = 'secure_storage_failed';
-        } finally {
-          if (ref.mounted) {
-            state = ConnectionState(origin: state.origin, error: code);
-          }
+      if (previous != null) await previous;
+      if (!ref.mounted) return;
+      final generation = ++_generation;
+      if (!quiet) state = state.copy(busy: true);
+      try {
+        await operation();
+        if (ref.mounted && generation == _generation) {
+          state = state.copy(busy: false, invitation: state.invitation);
         }
-      } else {
-        state = state.copy(
-          busy: false,
-          error: code,
-          invitation: state.invitation,
-        );
+      } catch (error) {
+        if (!ref.mounted || generation != _generation) return;
+        var code = error is ApiException
+            ? error.code
+            : error is TimeoutException
+            ? 'network_timeout'
+            : error is PlatformException || error is MissingPluginException
+            ? 'secure_storage_failed'
+            : 'network_failed';
+        if (error is FormatException || error is TypeError) {
+          code = 'invalid_response';
+        }
+        if (code == 'unauthorized') {
+          _token = null;
+          try {
+            if (!await ref
+                .read(preferencesProvider)
+                .setBool('couplelink.session.disabled.v1', true)) {
+              code = 'preferences_failed';
+            }
+            await ref.read(vaultProvider).clear();
+          } on PlatformException {
+            code = 'secure_storage_failed';
+          } on MissingPluginException {
+            code = 'secure_storage_failed';
+          } finally {
+            if (ref.mounted) {
+              state = ConnectionState(origin: state.origin, error: code);
+            }
+          }
+        } else {
+          state = state.copy(
+            busy: false,
+            error: code,
+            invitation: state.invitation,
+          );
+        }
       }
+    } finally {
+      done.complete();
+      if (identical(_pendingOperation, done.future)) _pendingOperation = null;
     }
   }
 
@@ -327,6 +402,9 @@ class ConnectionController extends Notifier<ConnectionState> {
     _token = token;
     state = state.copy(cursor: 0);
     await _snapshot();
+    if (!await prefs.setBool('couplelink.session.disabled.v1', false)) {
+      throw const ApiException('preferences_failed');
+    }
   });
   Future<void> _snapshot() async {
     final account = await request('GET', '/account');
@@ -337,20 +415,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         (couple != null && couple is! Map<String, dynamic>)) {
       throw const ApiException('invalid_response');
     }
-    if (user['id'] is! String ||
-        user['username'] is! String ||
-        user['display_name'] is! String) {
-      throw const ApiException('invalid_response');
-    }
-    if (couple != null &&
-        (couple['partner'] is! Map<String, dynamic> ||
-            couple['version'] is! int ||
-            couple['days_together'] is! int ||
-            couple['start_at'] is! String ||
-            couple['timezone'] is! String ||
-            (couple['partner'] as Map)['display_name'] is! String)) {
-      throw const ApiException('invalid_response');
-    }
+    validateAccountSnapshot(user, couple as Map<String, dynamic>?);
     for (final device in devices['devices'] as List) {
       if (device is! Map<String, dynamic> ||
           device['id'] is! String ||
@@ -362,16 +427,28 @@ class ConnectionController extends Notifier<ConnectionState> {
     }
     state = state.copy(
       user: user,
-      couple: couple as Map<String, dynamic>?,
+      couple: couple,
       clearCouple: couple == null,
       devices: (devices['devices'] as List)
           .map((v) => Map<String, dynamic>.from(v as Map))
           .toList(),
       invitation: state.invitation,
     );
+    if (_token != null) {
+      await ref
+          .read(vaultProvider)
+          .write(
+            jsonEncode({
+              'origin': state.origin,
+              'token': _token,
+              'user': user,
+              'couple': couple,
+            }),
+          );
+    }
   }
 
-  Future<void> refresh() => _perform(() async {
+  Future<void> refresh({bool quiet = false}) => _perform(() async {
     final changes = await request(
       'GET',
       '/sync/changes?cursor=${state.cursor}',
@@ -382,7 +459,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     }
     await _snapshot();
     state = state.copy(cursor: cursor, invitation: state.invitation);
-  });
+  }, quiet: quiet);
   Future<void> createInvitation() => _perform(() async {
     final result = await request('POST', '/couples/invitations');
     if (result['token'] is! String) {
@@ -422,14 +499,65 @@ class ConnectionController extends Notifier<ConnectionState> {
     }
   });
   Future<void> signOut() => _perform(() async {
-    await request('POST', '/auth/logout');
+    Object? remoteFailure;
+    try {
+      await request('POST', '/auth/logout');
+    } catch (error) {
+      remoteFailure = error;
+    }
     await _clear();
+    if (remoteFailure != null) throw const ApiException('logout_remote_failed');
+  });
+
+  /// Switch explicitly; never forward the old server's bearer token.
+  Future<void> changeServer(String address) => _perform(() async {
+    final url = normalizeOrigin(address);
+    _token = null;
+    state = ConnectionState(origin: state.origin, busy: true);
+    if (!await ref
+        .read(preferencesProvider)
+        .setBool('couplelink.session.disabled.v1', true)) {
+      throw const ApiException('preferences_failed');
+    }
+    await ref.read(vaultProvider).clear();
+    if (!await ref
+        .read(preferencesProvider)
+        .setString('couplelink.server.v1', url)) {
+      throw const ApiException('preferences_failed');
+    }
+    state = ConnectionState(origin: url);
   });
   Future<void> _clear() async {
     _token = null;
     if (ref.mounted) state = ConnectionState(origin: state.origin);
+    if (!await ref
+        .read(preferencesProvider)
+        .setBool('couplelink.session.disabled.v1', true)) {
+      throw const ApiException('preferences_failed');
+    }
     // Clear the visible identity even if the OS credential store is unavailable.
     // A persisted token has already been revoked by the server at this point.
     await ref.read(vaultProvider).clear();
+  }
+}
+
+void validateAccountSnapshot(
+  Map<String, dynamic> user,
+  Map<String, dynamic>? couple,
+) {
+  if (user['id'] is! String ||
+      user['username'] is! String ||
+      user['display_name'] is! String) {
+    throw const ApiException('invalid_response');
+  }
+  if (couple != null &&
+      (couple['id'] is! String ||
+          couple['partner'] is! Map<String, dynamic> ||
+          couple['version'] is! int ||
+          couple['days_together'] is! int ||
+          couple['start_at'] is! String ||
+          couple['timezone'] is! String ||
+          (couple['partner'] as Map)['display_name'] is! String)) {
+    throw const ApiException('invalid_response');
   }
 }

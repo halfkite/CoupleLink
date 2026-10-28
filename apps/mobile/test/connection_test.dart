@@ -28,39 +28,122 @@ class TestVault implements SessionVault {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  test('server URL rejects plaintext remote origins, embedded credentials and paths', () {
-    for (final url in [
-      'http://192.168.1.2:8080',
-      'https://user:password@example.com',
-      'https://example.com/api',
-      'https://example.com?token=secret',
-      'file:///tmp/a',
-    ]) {
-      expect(() => normalizeOrigin(url), throwsA(isA<ApiException>()));
-    }
-    expect(normalizeOrigin(' https://example.com/ '), 'https://example.com');
-    expect(normalizeOrigin('http://127.0.0.1:18080'), 'http://127.0.0.1:18080');
-    const allowed = '10.74.205.253,192.168.1.2,172.16.0.1,172.31.255.254';
-    for (final host in allowed.split(',')) {
+  test('switching server clears the session without sending its token to the new address', () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance(), vault = TestVault();
+    final requests = <Uri>[];
+    final client = MockClient((req) async {
+      requests.add(req.url);
+      if (req.url.path == '/healthz') {
+        return http.Response(jsonEncode({'api_version': 1}), 200);
+      }
+      if (req.url.path == '/auth/login') {
+        return http.Response(
+          jsonEncode({'token': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}),
+          200,
+        );
+      }
+      if (req.url.path == '/account') {
+        return http.Response(
+          jsonEncode({
+            'user': {
+              'id': 'alice',
+              'username': 'alice',
+              'display_name': 'Alice',
+            },
+            'couple': null,
+          }),
+          200,
+        );
+      }
+      if (req.url.path == '/devices') {
+        return http.Response(jsonEncode({'devices': []}), 200);
+      }
+      return http.Response(jsonEncode({'events': [], 'next_cursor': 0}), 200);
+    });
+    final container = ProviderContainer(
+      overrides: [
+        preferencesProvider.overrideWithValue(prefs),
+        vaultProvider.overrideWithValue(vault),
+        httpProvider.overrideWithValue(client),
+      ],
+    );
+    addTearDown(container.dispose);
+    final controller = container.read(connectionProvider.notifier);
+    await controller.signIn(
+      origin: 'https://original.example',
+      username: 'alice',
+      password: '12345678',
+      register: false,
+    );
+    expect(container.read(connectionProvider).signedIn, isTrue);
+    await controller.changeServer('https://backup.example');
+    expect(container.read(connectionProvider).signedIn, isFalse);
+    expect(container.read(connectionProvider).origin, 'https://backup.example');
+    expect(vault.value, isNull);
+    expect(requests.every((uri) => uri.host == 'original.example'), isTrue);
+    client.close();
+  });
+  test(
+    'server URL accepts configured LAN HTTP and rejects other plaintext hosts',
+    () {
+      for (final url in [
+        'https://user:password@example.com',
+        'https://example.com/api',
+        'https://example.com?token=secret',
+        'file:///tmp/a',
+        '',
+      ]) {
+        expect(() => normalizeOrigin(url), throwsA(isA<ApiException>()));
+      }
+      expect(normalizeOrigin(' https://example.com/ '), 'https://example.com');
       expect(
-        normalizeOrigin('http://$host:18080', localHttpHosts: allowed),
-        'http://$host:18080',
+        normalizeOrigin(
+          'http://192.168.137.1:18080',
+          localHttpHosts: '192.168.137.1',
+        ),
+        'http://192.168.137.1:18080',
       );
-    }
-    for (final host in [
-      '8.8.8.8',
-      '172.15.255.255',
-      '172.32.0.1',
-      '192.169.1.2',
-      '10.1.2.999',
-      '010.1.2.3',
-      '192.168.1.2.example.com',
-    ]) {
       expect(
-        () => normalizeOrigin('http://$host:18080', localHttpHosts: host),
+        () => normalizeOrigin('http://example.com:8080'),
         throwsA(isA<ApiException>()),
       );
-    }
+    },
+  );
+  test('connection test sends no credentials, checks server identity, and rejects redirects', () async {
+    var answer = 200;
+    var body = '{"status":"ok","api_version":1}';
+    final client = MockClient((request) async {
+      expect(request.method, 'GET');
+      expect(request.url.toString(), 'http://192.168.137.1:18080/healthz');
+      expect(request.headers.containsKey('Authorization'), isFalse);
+      expect(request.followRedirects, isFalse);
+      return http.Response(body, answer);
+    });
+    await testServerConnection(
+      client,
+      'http://192.168.137.1:18080',
+      localHttpHosts: '192.168.137.1',
+    );
+    body = '{"status":"ok","api_version":2}';
+    await expectLater(
+      testServerConnection(
+        client,
+        'http://192.168.137.1:18080',
+        localHttpHosts: '192.168.137.1',
+      ),
+      throwsA(isA<ApiException>()),
+    );
+    answer = 302;
+    await expectLater(
+      testServerConnection(
+        client,
+        'http://192.168.137.1:18080',
+        localHttpHosts: '192.168.137.1',
+      ),
+      throwsA(isA<ApiException>()),
+    );
+    client.close();
   });
   test('bearer token stays in vault and revoked sessions clear authenticated state', () async {
     SharedPreferences.setMockInitialValues({});

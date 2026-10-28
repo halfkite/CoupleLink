@@ -4,14 +4,55 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/strings.dart';
 import '../core/theme.dart';
 import '../ui/widgets.dart';
+import '../core/connection.dart';
+import 'account.dart';
+import 'real_chat.dart';
 
-class MessagesPage extends ConsumerStatefulWidget {
+class MessagesPage extends ConsumerWidget {
   const MessagesPage({super.key});
   @override
-  ConsumerState<MessagesPage> createState() => _MessagesPageState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final connection = ref.watch(connectionProvider),
+        s = ref.watch(stringsProvider);
+    if (!connection.signedIn) return const _DemoMessagesPage();
+    if (connection.couple == null) {
+      return ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          const PageHeading(
+            title: 'chat.title',
+            subtitle: 'chat.live.bindHint',
+          ),
+          CoupleCard(
+            child: Column(
+              children: [
+                Text(s.t('chat.live.bindHint')),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () => openAccount(context),
+                  child: Text(s.t('account.title')),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+    return RealChatPage(
+      key: ValueKey(
+        '${connection.origin}|${connection.user!['id']}|${connection.couple!['id']}',
+      ),
+    );
+  }
 }
 
-class _MessagesPageState extends ConsumerState<MessagesPage> {
+class _DemoMessagesPage extends ConsumerStatefulWidget {
+  const _DemoMessagesPage();
+  @override
+  ConsumerState<_DemoMessagesPage> createState() => _MessagesPageState();
+}
+
+class _MessagesPageState extends ConsumerState<_DemoMessagesPage> {
   final input = TextEditingController(), scroll = ScrollController();
   final localMessages = <String>[];
   @override

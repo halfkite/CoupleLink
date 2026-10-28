@@ -1,0 +1,16 @@
+<resources>
+    <string name="channel_alerts">消息提醒</string>
+    <string name="anniversary_reminder">纪念日提醒</string>
+    <string name="channel_connection">后台接收</string>
+    <string name="channel_interactions">情侣互动</string>
+    <string name="channel_interaction_vibrate">情侣互动·振动提醒</string>
+    <string name="channel_interaction_sound">情侣互动·响铃提醒</string>
+    <string name="channel_messages">聊天消息</string>
+    <string name="background_enabled">后台接收已开启</string>
+    <string name="background_connected">后台接收已连接</string>
+    <string name="background_retry">连接中断，正在重试；也可打开应用检查</string>
+    <string name="new_message_title">CoupleLink 新消息</string>
+    <string name="new_message_body">TA 给你发来了消息</string>
+    <string name="interaction_title">收到一份心意</string>
+    <string name="action_poke">戳一下</string><string name="action_miss">想你了</string><string name="action_hug">抱抱</string><string name="action_vibrate">震动</string><string name="action_ring">响铃</string>
+</resources>

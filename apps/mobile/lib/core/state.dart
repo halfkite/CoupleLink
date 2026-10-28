@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const appVersion = '1.0-r3';
+const appVersion = '1.0-r9';
 const cardIds = [
   'days',
   'interactions',
@@ -28,6 +28,8 @@ class AppSettings {
     this.hidden = const {},
     this.overrides = const {},
     this.reduceMotion = false,
+    this.allowInteractionVibration = true,
+    this.allowInteractionSound = false,
     this.persistFailed = false,
   });
   final CoupleTheme theme;
@@ -36,6 +38,7 @@ class AppSettings {
   final Set<String> hidden;
   final Map<String, String> overrides;
   final bool reduceMotion;
+  final bool allowInteractionVibration, allowInteractionSound;
   final bool persistFailed;
   factory AppSettings.restore(String? raw) {
     if (raw == null) return const AppSettings();
@@ -78,6 +81,8 @@ class AppSettings {
             : {},
         overrides: overrides,
         reduceMotion: data['reduceMotion'] == true,
+        allowInteractionVibration: data['allowInteractionVibration'] != false,
+        allowInteractionSound: data['allowInteractionSound'] == true,
       );
     } on FormatException {
       return const AppSettings();
@@ -90,6 +95,8 @@ class AppSettings {
     Set<String>? hidden,
     Map<String, String>? overrides,
     bool? reduceMotion,
+    bool? allowInteractionVibration,
+    bool? allowInteractionSound,
     bool? persistFailed,
   }) => AppSettings(
     theme: theme ?? this.theme,
@@ -98,6 +105,9 @@ class AppSettings {
     hidden: hidden ?? this.hidden,
     overrides: overrides ?? this.overrides,
     reduceMotion: reduceMotion ?? this.reduceMotion,
+    allowInteractionVibration:
+        allowInteractionVibration ?? this.allowInteractionVibration,
+    allowInteractionSound: allowInteractionSound ?? this.allowInteractionSound,
     persistFailed: persistFailed ?? this.persistFailed,
   );
   Map<String, Object> toJson() => {
@@ -107,6 +117,8 @@ class AppSettings {
     'hidden': hidden.toList(),
     'overrides': overrides,
     'reduceMotion': reduceMotion,
+    'allowInteractionVibration': allowInteractionVibration,
+    'allowInteractionSound': allowInteractionSound,
   };
 }
 
@@ -141,6 +153,10 @@ class SettingsController extends Notifier<AppSettings> {
   void theme(CoupleTheme value) => update(state.copyWith(theme: value));
   void locale(String value) => update(state.copyWith(locale: value));
   void motion(bool value) => update(state.copyWith(reduceMotion: value));
+  void interactionVibration(bool value) =>
+      update(state.copyWith(allowInteractionVibration: value));
+  void interactionSound(bool value) =>
+      update(state.copyWith(allowInteractionSound: value));
   void toggleCard(String id) {
     final hidden = {...state.hidden};
     hidden.contains(id) ? hidden.remove(id) : hidden.add(id);

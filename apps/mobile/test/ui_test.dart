@@ -2,14 +2,19 @@ import 'dart:convert';
 
 import 'package:couplelink/app.dart';
 import 'package:couplelink/core/state.dart';
+import 'package:couplelink/core/theme.dart';
 import 'package:couplelink/core/strings.dart';
 import 'package:couplelink/core/device_feedback.dart';
+import 'package:couplelink/core/connection.dart';
 import 'package:couplelink/features/interaction_feedback.dart';
 import 'package:couplelink/features/account.dart';
+import 'package:couplelink/features/server_addresses.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 late StringBundle testBundle;
 
@@ -67,6 +72,93 @@ void main() {
   setUpAll(() async {
     testBundle = await StringBundle.load();
   });
+  testWidgets('multiple server addresses can be added and removed', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          preferencesProvider.overrideWithValue(prefs),
+          bundleProvider.overrideWithValue(testBundle),
+        ],
+        child: MaterialApp(
+          theme: buildTheme(CoupleTheme.sakura),
+          home: const ServerAddressesPage(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (final address in ['https://one.example', 'https://two.example']) {
+      await tester.enterText(find.byType(TextField), address);
+      await tester.tap(find.text('添加备用地址'));
+      await tester.pumpAndSettle();
+    }
+    expect(prefs.getStringList('couplelink.server.addresses.v1'), [
+      'https://one.example',
+      'https://two.example',
+    ]);
+    await tester.tap(find.text('移除').first);
+    await tester.pumpAndSettle();
+    expect(prefs.getStringList('couplelink.server.addresses.v1'), [
+      'https://two.example',
+    ]);
+  });
+  testWidgets(
+    'connection button tests server without requiring account or password',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      var requests = 0;
+      final client = MockClient((request) async {
+        requests++;
+        expect(request.url.path, '/healthz');
+        expect(request.headers.containsKey('Authorization'), isFalse);
+        return http.Response('{"status":"ok","api_version":1}', 200);
+      });
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            preferencesProvider.overrideWithValue(prefs),
+            bundleProvider.overrideWithValue(testBundle),
+            httpProvider.overrideWithValue(client),
+          ],
+          child: MaterialApp(
+            theme: buildTheme(CoupleTheme.sakura),
+            home: const AccountPage(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('server-url')),
+        'https://example.com',
+      );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('test-server-connection')),
+      );
+      await tester.tap(find.byKey(const ValueKey('test-server-connection')));
+      await tester.pumpAndSettle();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pumpAndSettle();
+      expect(requests, 1);
+      for (
+        var i = 0;
+        i < 20 &&
+            find.byKey(const ValueKey('server-test-result')).evaluate().isEmpty;
+        i++
+      ) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      final result = find.byKey(const ValueKey('server-test-result'));
+      expect(result, findsOneWidget);
+      expect(tester.widget<Text>(result).data, '连接成功，已找到 CoupleLink 服务器。');
+      expect(find.text('密码至少 8 位'), findsNothing);
+    },
+  );
   testWidgets(
     'ring feedback is centered and suppressed feedback stays visible until closed',
     (tester) async {
@@ -103,7 +195,13 @@ void main() {
       await tester.ensureVisible(find.widgetWithText(ChoiceChip, '注册'));
       await tester.tap(find.widgetWithText(ChoiceChip, '注册'));
       await tester.pumpAndSettle();
-    expect(find.widgetWithText(TextFormField, '服务器设置码'), findsNothing);
+      expect(find.widgetWithText(TextFormField, '服务器设置码'), findsNothing);
+      final passwordField = tester.widget<TextFormField>(
+        find.widgetWithText(TextFormField, '密码'),
+      );
+      expect(passwordField.validator!('1234567'), '密码至少 8 位');
+      expect(passwordField.validator!('12345678'), isNull);
+      expect(passwordField.validator!('abcdefgh'), isNull);
       expect(tester.takeException(), isNull);
     },
   );

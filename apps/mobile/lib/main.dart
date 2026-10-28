@@ -7,11 +7,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app.dart';
 import 'core/state.dart';
 import 'core/strings.dart';
+import 'core/notifications.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final preferences = await SharedPreferences.getInstance();
   final bundle = await StringBundle.load();
+  await coupleNotifications.initialize();
   LicenseRegistry.addLicense(() async* {
     yield LicenseEntryWithLineBreaks([
       'Noto Sans SC',

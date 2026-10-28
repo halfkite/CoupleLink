@@ -19,11 +19,26 @@ services:
     environment:
       DATABASE_URL: postgresql://couplelink:${POSTGRES_PASSWORD}@db:5432/couplelink?sslmode=disable
       COUPLELINK_ALLOWED_ORIGINS: ${COUPLELINK_ALLOWED_ORIGINS:-}
+      COUPLELINK_REALTIME_URL: http://realtime:8000
+      COUPLELINK_REALTIME_API_KEY: ${COUPLELINK_REALTIME_API_KEY:?Set an independent random realtime API key}
+      COUPLELINK_REALTIME_SECRET: ${COUPLELINK_REALTIME_SECRET:?Set an independent random realtime signing key}
     depends_on:
       db:
         condition: service_healthy
+      realtime:
+        condition: service_started
     ports:
       - "${COUPLELINK_BIND_IP:-127.0.0.1}:${COUPLELINK_PORT:-18080}:8080"
+    restart: unless-stopped
+  realtime:
+    image: centrifugo/centrifugo:v6.10.2
+    command: centrifugo -c /centrifugo/config.json
+    environment:
+      CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY: ${COUPLELINK_REALTIME_SECRET:?Set an independent random realtime signing key}
+      CENTRIFUGO_HTTP_API_KEY: ${COUPLELINK_REALTIME_API_KEY:?Set an independent random realtime API key}
+      CENTRIFUGO_CLIENT_ALLOWED_ORIGINS: ${COUPLELINK_ALLOWED_ORIGINS:-}
+    volumes:
+      - ./centrifugo.json:/centrifugo/config.json:ro
     restart: unless-stopped
   https:
     image: caddy:2

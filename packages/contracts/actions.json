@@ -1,10 +1,11 @@
 {
   "schemaVersion": 1,
-  "preview": true,
+  "preview": false,
   "actions": [
     { "id": "miss_you", "labelKey": "interaction.miss", "expiresInSeconds": 120 },
     { "id": "poke", "labelKey": "interaction.poke", "expiresInSeconds": 120 },
     { "id": "hug", "labelKey": "interaction.hug", "expiresInSeconds": 120 },
-    { "id": "ring", "labelKey": "interaction.ring", "expiresInSeconds": 30 }
+    { "id": "ring", "labelKey": "interaction.ring", "expiresInSeconds": 30 },
+    { "id": "vibrate", "labelKey": "interaction.vibrate", "expiresInSeconds": 120 }
   ]
 }

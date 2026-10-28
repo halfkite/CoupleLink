@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -24,7 +26,9 @@ class _AccountPageState extends ConsumerState<AccountPage> {
       displayName = TextEditingController(),
       invitation = TextEditingController(),
       timezone = TextEditingController(text: 'Asia/Hong_Kong');
-  bool register = false, showPassword = false;
+  bool register = false, showPassword = false, testingConnection = false;
+  String? testResult;
+  int testGeneration = 0;
   DateTime start = DateTime.now();
   @override
   void initState() {
@@ -63,6 +67,31 @@ class _AccountPageState extends ConsumerState<AccountPage> {
     }
   }
 
+  Future<void> testConnection() async {
+    final generation = ++testGeneration;
+    final address = origin.text;
+    setState(() {
+      testingConnection = true;
+      testResult = null;
+    });
+    String result;
+    try {
+      await testServerConnection(ref.read(httpProvider), address);
+      result = 'success';
+    } on ApiException catch (error) {
+      result = error.code;
+    } on TimeoutException {
+      result = 'timeout';
+    } catch (_) {
+      result = 'unreachable';
+    }
+    if (!mounted || generation != testGeneration) return;
+    setState(() {
+      testingConnection = false;
+      testResult = result;
+    });
+  }
+
   Future<bool> confirm(String title, String body) async {
     final s = ref.read(stringsProvider);
     return await showDialog<bool>(
@@ -94,9 +123,10 @@ class _AccountPageState extends ConsumerState<AccountPage> {
     String? requiredValue(String? value) =>
         value == null || value.trim().isEmpty ? s.t('account.required') : null;
     final errorKey = 'account.error.${state.error}';
-    final errorText = s.t(errorKey) == errorKey
+    final errorText =
+        s.t(errorKey, {'hosts': configuredLocalHttpHosts}) == errorKey
         ? s.t('account.error.generic', {'code': state.error ?? ''})
-        : s.t(errorKey);
+        : s.t(errorKey, {'hosts': configuredLocalHttpHosts});
     return Scaffold(
       appBar: AppBar(
         title: Text(s.t('account.title')),
@@ -151,6 +181,15 @@ class _AccountPageState extends ConsumerState<AccountPage> {
                         controller: origin,
                         autocorrect: false,
                         keyboardType: TextInputType.url,
+                        onChanged: (_) {
+                          testGeneration++;
+                          if (testingConnection || testResult != null) {
+                            setState(() {
+                              testingConnection = false;
+                              testResult = null;
+                            });
+                          }
+                        },
                         decoration: InputDecoration(
                           labelText: s.t('account.server'),
                           hintText: 'https://couplelink.example.com',
@@ -159,20 +198,45 @@ class _AccountPageState extends ConsumerState<AccountPage> {
                           try {
                             normalizeOrigin(v ?? '');
                             return null;
-                          } on ApiException {
-                            return s.t('account.error.https_required');
+                          } on ApiException catch (error) {
+                            return s.t('account.error.${error.code}', {
+                              'hosts': configuredLocalHttpHosts,
+                            });
                           }
                         },
                       ),
                       const SizedBox(height: 8),
                       Text(
                         s.t('account.serverHint', {
-                          'hosts': configuredLocalHttpHosts.isEmpty
-                              ? s.t('account.noLocalHosts')
-                              : configuredLocalHttpHosts,
+                          'hosts': configuredLocalHttpHosts,
                         }),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        key: const ValueKey('test-server-connection'),
+                        onPressed: testingConnection || state.busy
+                            ? null
+                            : testConnection,
+                        icon: const Icon(Icons.wifi_tethering_rounded),
+                        label: Text(
+                          s.t(
+                            testingConnection
+                                ? 'account.probe.testing'
+                                : 'account.probe.button',
+                          ),
+                        ),
+                      ),
+                      if (testResult != null)
+                        Semantics(
+                          liveRegion: true,
+                          child: Text(
+                            s.t('account.probe.$testResult', {
+                              'hosts': configuredLocalHttpHosts,
+                            }),
+                            key: const ValueKey('server-test-result'),
+                          ),
+                        ),
                       const SizedBox(height: 16),
                       Wrap(
                         spacing: 10,
@@ -216,7 +280,7 @@ class _AccountPageState extends ConsumerState<AccountPage> {
                         obscureText: !showPassword,
                         autocorrect: false,
                         enableSuggestions: false,
-                        maxLength: 128,
+                        maxLength: maximumPasswordLength,
                         decoration: InputDecoration(
                           labelText: s.t('account.password'),
                           counterText: '',
@@ -231,9 +295,12 @@ class _AccountPageState extends ConsumerState<AccountPage> {
                             ),
                           ),
                         ),
-                        validator: (v) => (v?.runes.length ?? 0) >= 12
+                        validator: (v) =>
+                            (v?.runes.length ?? 0) >= minimumPasswordLength
                             ? null
-                            : s.t('account.passwordHint'),
+                            : s.t('account.passwordHint', {
+                                'min': minimumPasswordLength.toString(),
+                              }),
                       ),
                       if (register) ...[
                         const SizedBox(height: 16),

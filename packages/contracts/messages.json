@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "message": {
+    "request": [
+      "id",
+      "couple_id",
+      "body"
+    ],
+    "id": "UUID allocated before first local enqueue; same ID retries the same content",
+    "body": {
+      "minNonWhitespace": 1,
+      "maxUnicodeCharacters": 4000
+    },
+    "sequence": "positive server-assigned sequence within active couple"
+  },
+  "states": {
+    "queued": "persisted on sender",
+    "sent": "accepted by server",
+    "delivered": "persisted and acknowledged by another user device"
+  },
+  "sync": {
+    "pageSize": 100,
+    "after": "exclusive contiguous cursor",
+    "before": "exclusive history sequence"
+  },
+  "notification": {
+    "channel": "events:<user_id>",
+    "data": {
+      "refresh": true
+    },
+    "containsMessageBody": false
+  },
+  "revocation": "Every message and receipt request rechecks session and active membership under the same user locks as unbind"
+}

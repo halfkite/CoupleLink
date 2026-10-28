@@ -1,7 +1,7 @@
 name: couplelink
 description: "CoupleLink private couple space UI preview"
 publish_to: 'none'
-version: 1.0.0-r3+3
+version: 1.0.0-r9+9
 
 environment:
   sdk: ^3.13.7
@@ -15,6 +15,11 @@ dependencies:
   shared_preferences: 2.5.6
   http: 1.6.0
   flutter_secure_storage: 11.2.0
+  drift: 2.35.1
+  drift_flutter: 0.3.1
+  centrifuge: 0.21.0
+  flutter_local_notifications: 22.3.3
+  flutter_foreground_task: 11.0.3
 
 dev_dependencies:
   flutter_test:

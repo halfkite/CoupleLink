@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/state.dart';
 import '../core/connection.dart';
+import '../core/remote_interactions.dart';
 import '../core/strings.dart';
 import '../core/theme.dart';
 import '../ui/widgets.dart';
@@ -255,6 +256,8 @@ class _InteractionsCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final s = ref.watch(stringsProvider), c = context.colors;
+    final connection = ref.watch(connectionProvider);
+    final interaction = ref.watch(interactionProvider);
     return CoupleCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -282,7 +285,29 @@ class _InteractionsCard extends ConsumerWidget {
                       button: true,
                       child: InkWell(
                         key: ValueKey('gesture-$id'),
-                        onTap: () => previewGesture(context, s, id),
+                        onTap: () async {
+                          if (!connection.signedIn ||
+                              connection.couple == null) {
+                            await previewGesture(context, s, id);
+                            return;
+                          }
+                          await ref.read(interactionProvider.notifier).send(id);
+                          if (!context.mounted) return;
+                          final error = ref.read(interactionProvider).error;
+                          final key = error == null
+                              ? 'interaction.sent'
+                              : 'interaction.error.$error';
+                          final text = s.t(key);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                text == key
+                                    ? s.t('interaction.error.network_failed')
+                                    : text,
+                              ),
+                            ),
+                          );
+                        },
                         borderRadius: BorderRadius.circular(18),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 5),
@@ -327,6 +352,14 @@ class _InteractionsCard extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 14),
+          if (connection.couple != null && interaction.sent.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                '${s.t(actionKeys[interaction.sent.first['action']] ?? 'interaction.poke')} · ${s.t('interaction.status.${interaction.sent.first['status']}')}${interaction.sent.first['result'] is String ? ' · ${s.t('interaction.result.${interaction.sent.first['result']}')}' : ''}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(

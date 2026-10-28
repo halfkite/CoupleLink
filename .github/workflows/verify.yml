@@ -1,4 +1,4 @@
-name: CoupleLink UI verification
+name: CoupleLink verification
 
 on:
   push:
@@ -9,6 +9,33 @@ permissions:
   contents: read
 
 jobs:
+  web-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Web queue and identity regression
+        working-directory: apps/mobile-web
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npm run build
+          npm run sync
+      - name: Android bridge verification build
+        working-directory: apps/mobile-web/android
+        run: bash gradlew testDebugUnitTest assembleDebug --console=plain
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: couplelink-web-android-verification
+          path: apps/mobile-web/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
   server:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -31,7 +58,7 @@ jobs:
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
-      - name: Verify account and relationship transactions
+      - name: Verify accounts, chat idempotency, receipts and revocation
         working-directory: server
         run: |
           go vet ./...

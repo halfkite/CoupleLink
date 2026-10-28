@@ -1,0 +1,16 @@
+<resources>
+    <string name="channel_alerts">Message alerts</string>
+    <string name="anniversary_reminder">Anniversary reminder</string>
+    <string name="channel_connection">Background reception</string>
+    <string name="channel_interactions">Couple interactions</string>
+    <string name="channel_interaction_vibrate">Interaction vibration</string>
+    <string name="channel_interaction_sound">Interaction sound</string>
+    <string name="channel_messages">Chat messages</string>
+    <string name="background_enabled">Background reception enabled</string>
+    <string name="background_connected">Background reception connected</string>
+    <string name="background_retry">Connection lost; retrying. Open the app to check.</string>
+    <string name="new_message_title">CoupleLink message</string>
+    <string name="new_message_body">Your partner sent a message</string>
+    <string name="interaction_title">A little love for you</string>
+    <string name="action_poke">Poke</string><string name="action_miss">Miss you</string><string name="action_hug">Hug</string><string name="action_vibrate">Vibrate</string><string name="action_ring">Ring</string>
+</resources>

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -24,6 +25,9 @@ import (
 type Config struct {
 	Version        string
 	AllowedOrigins []string
+	RealtimeURL    string
+	RealtimeAPIKey string
+	RealtimeSecret string
 }
 type Server struct {
 	db        *pgxpool.Pool
@@ -58,6 +62,10 @@ func (p *problem) Error() string         { return p.code }
 func fail(status int, code string) error { return &problem{status, code} }
 
 var usernamePattern = regexp.MustCompile(`^[a-z0-9_-]{3,32}$`)
+
+const minimumPasswordLength = 8
+const maximumPasswordLength = 128
+
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 func Migrate(ctx context.Context, db *pgxpool.Pool) error {
@@ -76,7 +84,7 @@ func Migrate(ctx context.Context, db *pgxpool.Pool) error {
 	if err = tx.QueryRow(ctx, `SELECT COALESCE(max(version),0) FROM schema_migrations`).Scan(&current); err != nil {
 		return err
 	}
-	if current > 1 {
+	if current > 4 {
 		return errors.New("unsupported schema version")
 	}
 	if current == 0 {
@@ -87,9 +95,39 @@ func Migrate(ctx context.Context, db *pgxpool.Pool) error {
 			return err
 		}
 	}
+	if current < 2 {
+		if _, err = tx.Exec(ctx, migrations.Chat); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(2)`); err != nil {
+			return err
+		}
+	}
+	if current < 3 {
+		if _, err = tx.Exec(ctx, migrations.Interactions); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(3)`); err != nil {
+			return err
+		}
+	}
+	if current < 4 {
+		if _, err = tx.Exec(ctx, migrations.Memories); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(4)`); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
 }
 func New(db *pgxpool.Pool, cfg Config) (*Server, error) {
+	if cfg.RealtimeURL != "" || cfg.RealtimeAPIKey != "" || cfg.RealtimeSecret != "" {
+		endpoint, err := url.Parse(cfg.RealtimeURL)
+		if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || endpoint.Path != "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || len(cfg.RealtimeAPIKey) < 32 || len(cfg.RealtimeSecret) < 32 {
+			return nil, errors.New("invalid realtime configuration")
+		}
+	}
 	dummy, err := hashPassword("constant dummy password for timing")
 	if err != nil {
 		return nil, err
@@ -106,10 +144,13 @@ func write(w http.ResponseWriter, status int, value any) {
 	json.NewEncoder(w).Encode(value)
 }
 func decode(w http.ResponseWriter, r *http.Request, value any) error {
+	return decodeLimit(w, r, value, 8192)
+}
+func decodeLimit(w http.ResponseWriter, r *http.Request, value any, limit int64) error {
 	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
 		return fail(415, "json_required")
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(value); err != nil {
@@ -153,6 +194,24 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /devices", s.wrap(s.devices))
 	mux.HandleFunc("DELETE /devices/{id}", s.wrap(s.revokeDevice))
 	mux.HandleFunc("GET /sync/changes", s.wrap(s.changes))
+	mux.HandleFunc("POST /messages", s.wrap(s.sendMessage))
+	mux.HandleFunc("GET /messages", s.wrap(s.listMessages))
+	mux.HandleFunc("GET /messages/search", s.wrap(s.searchMessages))
+	mux.HandleFunc("GET /messages/context", s.wrap(s.messageContext))
+	mux.HandleFunc("PUT /couples/current", s.wrap(s.updateCoupleDate))
+	mux.HandleFunc("GET /anniversaries", s.wrap(s.listAnniversaries))
+	mux.HandleFunc("POST /anniversaries", s.wrap(s.saveAnniversary))
+	mux.HandleFunc("PUT /anniversaries/{id}", s.wrap(s.saveAnniversary))
+	mux.HandleFunc("DELETE /anniversaries/{id}", s.wrap(s.deleteAnniversary))
+	mux.HandleFunc("GET /anniversaries/reminders", s.wrap(s.pendingReminders))
+	mux.HandleFunc("POST /anniversaries/reminders/receipts", s.wrap(s.ackReminder))
+	mux.HandleFunc("POST /messages/receipts", s.wrap(s.deliverMessages))
+	mux.HandleFunc("POST /interactions", s.wrap(s.sendInteraction))
+	mux.HandleFunc("GET /interactions", s.wrap(s.listInteractions))
+	mux.HandleFunc("POST /interactions/claim", s.wrap(s.claimInteraction))
+	mux.HandleFunc("POST /interactions/result", s.wrap(s.interactionResult))
+	mux.HandleFunc("POST /realtime/token", s.wrap(s.realtimeToken))
+	s.attachRealtimeProxy(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-CoupleLink-API", "1")
@@ -170,7 +229,7 @@ func (s *Server) Handler() http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(204)
 				return
@@ -235,7 +294,7 @@ func (s *Server) authRequest(w http.ResponseWriter, r *http.Request) (authInput,
 	if !s.limiter.allow(host) {
 		return input, fail(429, "rate_limited")
 	}
-	if !usernamePattern.MatchString(input.Username) || !uuidPattern.MatchString(input.DeviceID) || !validText(input.DeviceLabel, 64) || !validText(input.Platform, 24) || utf8.RuneCountInString(input.Password) < 12 || utf8.RuneCountInString(input.Password) > 128 || !utf8.ValidString(input.Password) {
+	if !usernamePattern.MatchString(input.Username) || !uuidPattern.MatchString(input.DeviceID) || !validText(input.DeviceLabel, 64) || !validText(input.Platform, 24) || utf8.RuneCountInString(input.Password) < minimumPasswordLength || utf8.RuneCountInString(input.Password) > maximumPasswordLength || !utf8.ValidString(input.Password) {
 		return input, fail(400, "invalid_input")
 	}
 	return input, nil
@@ -327,6 +386,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 func (s *Server) newSession(ctx context.Context, tx pgx.Tx, user string, input authInput) (string, time.Time, error) {
+	if err := lockUsers(ctx, tx, user); err != nil {
+		return "", time.Time{}, err
+	}
 	tag, err := tx.Exec(ctx, `INSERT INTO devices(id,user_id,label,platform) VALUES($1,$2,$3,$4)
   ON CONFLICT(id) DO UPDATE SET label=excluded.label,platform=excluded.platform,last_seen=now(),revoked_at=NULL
   WHERE devices.user_id=excluded.user_id`, input.DeviceID, user, input.DeviceLabel, input.Platform)
@@ -336,7 +398,7 @@ func (s *Server) newSession(ctx context.Context, tx pgx.Tx, user string, input a
 	if tag.RowsAffected() != 1 {
 		return "", time.Time{}, fail(409, "device_in_use")
 	}
-	if _, err = tx.Exec(ctx, `UPDATE sessions SET revoked_at=now() WHERE user_id=$1 AND device_id=$2 AND revoked_at IS NULL`, user, input.DeviceID); err != nil {
+	if err = revokeSessions(ctx, tx, user, input.DeviceID); err != nil {
 		return "", time.Time{}, err
 	}
 	id, err := identifier()
@@ -356,11 +418,25 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(r.Context(), `UPDATE sessions SET revoked_at=now() WHERE id=$1`, id.SessionID)
-	if err == nil {
-		write(w, 200, map[string]bool{"ok": true})
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		return err
 	}
-	return err
+	defer tx.Rollback(r.Context())
+	if err = lockUsers(r.Context(), tx, id.User.ID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(r.Context(), `UPDATE sessions SET revoked_at=now() WHERE id=$1`, id.SessionID); err != nil {
+		return err
+	}
+	if err = enqueueRealtime(r.Context(), tx, "disconnect", id.SessionID); err != nil {
+		return err
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	write(w, 200, map[string]bool{"ok": true})
+	return nil
 }
 func (s *Server) account(w http.ResponseWriter, r *http.Request) error {
 	id, err := s.auth(r)
@@ -371,7 +447,7 @@ func (s *Server) account(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	write(w, 200, map[string]any{"user": id.User, "couple": couple, "device_id": id.DeviceID})
+	write(w, 200, map[string]any{"user": id.User, "couple": couple, "device_id": id.DeviceID, "features": []string{"memories_v1", "chat_search_v1"}})
 	return nil
 }
 func (s *Server) current(w http.ResponseWriter, r *http.Request) error {
@@ -435,6 +511,9 @@ func event(ctx context.Context, tx pgx.Tx, kind, ref string, ids ...string) erro
 			return err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO sync_events(user_id,seq,event_type,ref_id) VALUES($1,$2,$3,$4)`, id, seq, kind, ref); err != nil {
+			return err
+		}
+		if err := enqueueRealtime(ctx, tx, "notify", id); err != nil {
 			return err
 		}
 	}
@@ -646,6 +725,9 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	defer tx.Rollback(r.Context())
+	if err = lockUsers(r.Context(), tx, id.User.ID); err != nil {
+		return err
+	}
 	tag, err := tx.Exec(r.Context(), `UPDATE devices SET revoked_at=now() WHERE id=$1 AND user_id=$2`, device, id.User.ID)
 	if err != nil {
 		return err
@@ -653,7 +735,7 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) error {
 	if tag.RowsAffected() != 1 {
 		return fail(404, "device_not_found")
 	}
-	if _, err = tx.Exec(r.Context(), `UPDATE sessions SET revoked_at=now() WHERE device_id=$1 AND user_id=$2`, device, id.User.ID); err != nil {
+	if err = revokeSessions(r.Context(), tx, id.User.ID, device); err != nil {
 		return err
 	}
 	if err = tx.Commit(r.Context()); err != nil {

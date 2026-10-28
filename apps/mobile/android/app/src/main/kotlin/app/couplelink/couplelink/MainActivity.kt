@@ -11,7 +11,9 @@ import android.media.RingtoneManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.view.HapticFeedbackConstants
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.os.VibrationEffect
 
 class MainActivity : FlutterActivity() {
     private var feedbackChannel: MethodChannel? = null
@@ -27,9 +29,31 @@ class MainActivity : FlutterActivity() {
         feedbackChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "previewVibration" -> {
-                    val feedback = if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY
-                    val requested = window.decorView.performHapticFeedback(feedback)
-                    result.success(if (requested) "requested" else "suppressed")
+                    val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+                    val notifications = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+                    val vibrator = if (Build.VERSION.SDK_INT >= 31) {
+                        (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+                    } else {
+                        @Suppress("DEPRECATION")
+                        getSystemService(VIBRATOR_SERVICE) as Vibrator
+                    }
+                    when {
+                        !vibrator.hasVibrator() -> result.success("unsupported")
+                        audio.ringerMode == AudioManager.RINGER_MODE_SILENT ||
+                            notifications.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL -> result.success("suppressed")
+                        else -> try {
+                            val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build()
+                            if (Build.VERSION.SDK_INT >= 26) {
+                                vibrator.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE), attributes)
+                            } else {
+                                @Suppress("DEPRECATION")
+                                vibrator.vibrate(200)
+                            }
+                            result.success("requested")
+                        } catch (error: SecurityException) {
+                            result.error("vibration_denied", "System denied vibration", null)
+                        }
+                    }
                 }
                 "previewSound" -> {
                     stopFeedback()

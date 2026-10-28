@@ -1,4 +1,6 @@
-# 构建 CoupleLink 1.0-r3
+# 构建 CoupleLink 1.0-r9
+
+当前安卓发布入口改为 `apps/mobile-web`，使用 JDK 21 和 `scripts/build-web-android.ps1`。详细步骤见 [Web 安卓客户端](WEB-ANDROID.md)。以下 Flutter 步骤保留用于旧客户端维护，不再作为 r8 默认 APK 来源。
 
 ## 固定环境
 
@@ -44,7 +46,7 @@ Vela 工程中执行 `npm ci` 与 `npm run release`。调试用 `npm run build` 
 
 ## 版本
 
-本轮所有发布名称为 `1.0-r3`，Flutter/npm 的机器格式为 `1.0.0-r3`。后续使用 `node scripts/set-revision.mjs N` 同步应用、服务端、锁文件和显示版本；重编本轮包不递增。未经用户明确要求不改主版本 `1.0`。
+本轮所有发布名称为 `1.0-r7`，Flutter/npm 的机器格式为 `1.0.0-r7`。后续使用 `node scripts/set-revision.mjs N` 同步应用、服务端、锁文件和显示版本；重编本轮包不递增。未经用户明确要求不改主版本 `1.0`。
 
 服务端可单独执行 `./scripts/build-server.ps1 -GoCommand 'Go可执行文件路径'`，输出 Windows/Linux x64 二进制到 `.tools/server-release`。设置 `COUPLELINK_TEST_DATABASE_URL` 后脚本会运行真正的数据库集成测试；未设置时该项会明确跳过。完整构建脚本支持同名 `-GoCommand` 参数。
 
@@ -52,4 +54,10 @@ Vela 工程中执行 `npm ci` 与 `npm run release`。调试用 `npm run build` 
 
 `./scripts/build.ps1 -LocalHttpHosts '你的服务器私有IPv4地址'` 将同一配置交给 Flutter 和 Android。直接 Flutter 构建时使用 `--dart-define=COUPLELINK_LOCAL_HTTP_HOSTS=地址`。支持逗号分隔的明确地址，拒绝公共 IP、通配域和整个网段。
 
-Android Gradle 的 Variant API 注册生成资源任务，生成精确域名规则；静态和生成的 base-config 都保持 cleartextTrafficPermitted=false。没有配置时只允许原有回环调试地址。本轮构建值是 10.74.205.253；它是部署配置，不写死在业务代码中。
+Android Gradle 的 Variant API 注册生成资源任务，生成精确域名规则；静态和生成的 base-config 都保持 cleartextTrafficPermitted=false。没有配置时只允许原有回环调试地址。本轮构建值是 10.74.205.253,192.168.137.1；它是部署配置，不写死在业务代码中。
+
+## 文字聊天依赖与联调
+
+Drift 2.35.1、drift_flutter 0.3.1、centrifuge 0.21.0 固定于 pubspec，实际 SQLite 版本固定于锁文件。Web 必须部署匹配的 drift_worker.js 与 sqlite3.wasm；版本、来源和散列见第三方声明。Android 原生 SQLite 由依赖的构建钩子打包。
+
+独立测试服务器建议使用 `start-local-server.ps1 -ProjectName couplelink-qa-r4 -BindAddress 127.0.0.1 -Port 18081`。仅在这个隔离服务上设置 `COUPLELINK_TEST_API_ORIGIN=http://127.0.0.1:18081` 后运行 `node scripts/inspect-chat.mjs`；该脚本会创建测试账号、消息与绑定，不要指向个人实际使用库。
