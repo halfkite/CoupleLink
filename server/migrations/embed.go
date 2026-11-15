@@ -13,3 +13,6 @@ var Interactions string
 
 //go:embed 004_memories.sql
 var Memories string
+
+//go:embed 005_access_keys.sql
+var AccessKeys string

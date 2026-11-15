@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
-import { Client, actions, errorCode, normalizeOrigin, newID, type Action } from './core';
+import { Client, actions, errorCode, normalizeOrigin, newID, parseLoginLink, type Action } from './core';
 import { ChatStorage } from './storage';
 import { device, transport, native, isAndroid, type NotificationDiagnostics } from './device';
 import { text, type Locale } from './strings';
@@ -16,7 +16,7 @@ const address = ref(localStorage.getItem('cl.origin') || 'http://192.168.137.1:1
 let saved: string[] = []; try { const a = JSON.parse(localStorage.getItem('cl.addresses') || '[]'); if (Array.isArray(a)) saved = a.filter(x => typeof x === 'string'); } catch { /* Invalid optional address preferences are reset, never credentials. */ }
 const today = new Date();
 const localDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-const addresses = ref(saved), register = ref(false), username = ref(''), password = ref(''), nickname = ref(''), invite = ref(''), startDate = ref(localDate);
+const addresses = ref(saved), invite = ref(''), startDate = ref(localDate), loginLink = ref(localStorage.getItem('cl.login') || '');
 const feedback = ref(''), actionError = ref(''), pending = ref(false), icons: Record<string, string> = { home: '♡', map: '⌖', chat: '☏', time: '◷', me: '☺' };
 const diagnostics = ref<NotificationDiagnostics | null>(null);
 const reception = new AutoReception({ context: () => ({ scope: s.ready && s.user && s.couple ? JSON.stringify([s.origin, s.user.id, s.couple.id]) : '', foreground: !document.hidden }), status: () => native.status(), permission: () => native.permission(), start: () => client.background(true), stop: () => client.background(false), wasPrompted: () => localStorage.getItem('cl.notifications.prompted') === 'yes', markPrompted: () => localStorage.setItem('cl.notifications.prompted', 'yes'), update: value => { s.background = value; } });
@@ -26,10 +26,11 @@ const days = computed(() => s.couple?.days_together ?? '—');
 async function run(action: () => Promise<unknown>) { if (pending.value) return; pending.value = true; feedback.value = ''; actionError.value = ''; try { await action(); } catch (e) { actionError.value = errorCode(e); } finally { pending.value = false; } }
 async function selectServer(value: string) { await client.changeServer(value); address.value = s.origin; localStorage.setItem('cl.origin', s.origin); if (!addresses.value.includes(s.origin)) addresses.value.push(s.origin); }
 async function login() {
-  if (s.origin !== address.value.trim().replace(/\/$/, '')) await selectServer(address.value);
-  const key = `cl.device.${JSON.stringify([s.origin, username.value.trim().toLowerCase()])}`;
-  let id = localStorage.getItem(key); if (!id) { id = newID(); localStorage.setItem(key, id); }
-  await client.authenticate(username.value, password.value, nickname.value, register.value, id); password.value = ''; await client.sync();
+  const { origin, key } = parseLoginLink(loginLink.value || address.value);
+  const deviceKey = `cl.device.${origin}`;
+  let id = localStorage.getItem(deviceKey); if (!id) { id = newID(); localStorage.setItem(deviceKey, id); }
+  await client.authenticateKey(origin, key, id);
+  address.value = s.origin; localStorage.setItem('cl.login', loginLink.value); await client.sync();
 }
 async function refreshDiagnostics() { if (!isAndroid) { feedback.value = t('android_only'); return; } diagnostics.value = await native.diagnostics(); s.background = diagnostics.value.running; }
 async function permission() { if (!isAndroid) { feedback.value = t('android_only'); return; } const granted = await reception.ensure(true); feedback.value = t(granted ? 'granted' : 'denied'); if (granted) s.notificationError = ''; await refreshDiagnostics(); }
@@ -52,7 +53,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); document.removeEventListene
 
 <template>
   <div class="app" :data-theme="theme">
-    <header><div class="brand">CoupleLink <span>1.0-r11</span></div><button class="avatar small" @click="tab = 'me'" :aria-label="t('me')">♡</button></header>
+    <header><div class="brand">CoupleLink <span>1.0-r12</span></div><button class="avatar small" @click="tab = 'me'" :aria-label="t('me')">♡</button></header>
     <main>
       <div class="feedback-stack">
       <div v-if="actionError" class="banner error" role="alert">{{ t(actionError) }}<button @click="actionError = ''" :aria-label="t('close')">×</button></div>
@@ -71,9 +72,9 @@ onUnmounted(() => { if (timer) clearInterval(timer); document.removeEventListene
       <section v-if="tab === 'time'"><CalendarPanel :client="client" :t="t" /></section>
       <section v-if="tab === 'map'"><div class="heading"><h1>{{ t('map') }}</h1><p>{{ t('featurePending') }}</p></div><article class="card empty"><span class="empty-icon">⌖</span><p>{{ t('mapHelp') }}</p></article></section>
       <section v-if="tab === 'me'">
-        <div class="heading"><h1>{{ t('me') }}</h1><p>CoupleLink · 1.0-r11</p></div>
+        <div class="heading"><h1>{{ t('me') }}</h1><p>CoupleLink · 1.0-r12</p></div>
         <article class="card"><h2>{{ t('account') }}</h2><p v-if="!isAndroid" class="subtle">{{ t('browserHelp') }}</p><p class="subtle">{{ t('migrationHelp') }}</p>
-          <template v-if="!s.user"><div class="segmented"><button :class="{ active: !register }" @click="register = false">{{ t('login') }}</button><button :class="{ active: register }" @click="register = true">{{ t('register') }}</button></div><form @submit.prevent="run(login)"><label>{{ t('server') }}<input v-model="address" inputmode="url" autocomplete="url" required></label><p v-if="address.startsWith('http:')" class="warning">{{ t('httpWarning') }}</p><button type="button" class="outline" :disabled="pending" @click="run(async () => { feedback = t('testOk') + ' · ' + await client.test(address) })">{{ t('test') }}</button><p class="subtle">{{ t('addressHelp') }}</p><label>{{ t('username') }}<input v-model="username" autocomplete="username" pattern="[A-Za-z0-9_-]{3,32}" required></label><label v-if="register">{{ t('nickname') }}<input v-model="nickname" maxlength="80" required></label><label>{{ t('password') }}<input type="password" v-model="password" autocomplete="current-password" minlength="8" maxlength="128" required></label><button class="primary wide" :disabled="pending">{{ t(pending ? 'busy' : register ? 'register' : 'login') }}</button></form></template>
+          <template v-if="!s.user"><form @submit.prevent="run(login)"><label>{{ t('loginLink') }}<input v-model="loginLink" inputmode="url" autocomplete="off" spellcheck="false" required placeholder="http://127.0.0.1:30710-keyxxxxxxxxxxxxxxxxxxxx"></label><p class="subtle">{{ t('loginLinkHelp') }}</p><button class="primary wide" :disabled="pending">{{ t(pending ? 'busy' : 'login') }}</button></form></template>
           <template v-else><div class="profile"><div class="avatar">{{ s.user.display_name.slice(0, 1) }}</div><div><h3>{{ s.user.display_name }}</h3><p>@{{ s.user.username }}</p></div></div><template v-if="!s.couple"><button class="outline wide" :disabled="pending" @click="run(() => client.invitation())">{{ t('createInvite') }}</button><output v-if="s.invitation" class="invite">{{ s.invitation }}</output><form @submit.prevent="run(() => client.join(invite, startDate))"><label>{{ t('invitation') }}<input v-model="invite" required></label><label>{{ t('date') }}<input type="date" v-model="startDate" required></label><button class="primary wide" :disabled="pending">{{ t('join') }}</button></form></template><template v-else><p>♡ {{ s.couple.partner.display_name }}</p><button class="outline" :disabled="pending" @click="run(confirmUnbind)">{{ t('unbind') }}</button></template><button class="text-button" :disabled="pending" @click="run(() => client.logout())">{{ t('logout') }}</button></template>
         </article>
         <article class="card"><h2>{{ t('notifications') }}</h2><p class="background-status" role="status">{{ t(s.background ? 'backgroundRunning' : 'backgroundStopped') }}</p><h3>{{ t('background') }}</h3><p class="subtle">{{ t('backgroundHelp') }}</p><button v-if="!s.background" class="primary wide" :disabled="pending" @click="run(permission)">{{ t('enableReminders') }}</button><div class="button-grid"><button class="outline" @click="run(notifyTest)">{{ t('notificationTest') }}</button><button class="outline" @click="run(() => feedbackTest(false))">{{ t('vibrationTest') }}</button><button class="outline" @click="run(() => feedbackTest(true))">{{ t('soundTest') }}</button></div><button class="text-button" @click="run(async () => { if(isAndroid) await native.settings(); else feedback = t('android_only') })">{{ t('systemSettings') }} ↗</button><button class="outline wide" @click="run(refreshDiagnostics)">{{ t('diagnostics') }}</button>

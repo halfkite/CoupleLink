@@ -1,7 +1,7 @@
 export const locales = {
   "zh_CN": {
     "app.demo": "界面演示",
-    "app.version": "1.0-r11",
+    "app.version": "1.0-r12",
     "band.home.title": "我们的空间",
     "band.home.days": "相恋的日子",
     "band.home.note": "每一天都爱你",
@@ -53,7 +53,7 @@ export const locales = {
   },
   "en": {
     "app.demo": "UI preview",
-    "app.version": "1.0-r11",
+    "app.version": "1.0-r12",
     "band.home.title": "Our space",
     "band.home.days": "Days together",
     "band.home.note": "A little more love",

@@ -16,7 +16,14 @@ import (
 	_ "time/tzdata"
 )
 
-var version = "1.0-r11"
+var version = "1.0-r12"
+
+func portOf(addr string) string {
+	if index := strings.LastIndex(addr, ":"); index >= 0 && index+1 < len(addr) {
+		return addr[index+1:]
+	}
+	return addr
+}
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -42,7 +49,7 @@ func main() {
 	}
 	handler, err := api.New(db, api.Config{Version: version,
 		RealtimeURL: os.Getenv("COUPLELINK_REALTIME_URL"), RealtimeAPIKey: os.Getenv("COUPLELINK_REALTIME_API_KEY"), RealtimeSecret: os.Getenv("COUPLELINK_REALTIME_SECRET"),
-		AllowedOrigins: strings.Fields(os.Getenv("COUPLELINK_ALLOWED_ORIGINS"))})
+		AllowedOrigins: strings.Fields(os.Getenv("COUPLELINK_ALLOWED_ORIGINS")), AdminToken: os.Getenv("COUPLELINK_ADMIN_TOKEN")})
 	if err != nil {
 		log.Fatal("API initialization failed")
 	}
@@ -50,7 +57,7 @@ func main() {
 	go handler.RunAnniversaryReminders(ctx)
 	addr := os.Getenv("COUPLELINK_LISTEN_ADDR")
 	if addr == "" {
-		addr = "127.0.0.1:18080"
+		addr = "0.0.0.0:30710"
 	}
 	server := &http.Server{Addr: addr, Handler: handler.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 	stopped := make(chan struct{})
@@ -62,6 +69,7 @@ func main() {
 		close(stopped)
 	}()
 	log.Printf("CoupleLink %s listening at %s", version, addr)
+	log.Printf("Admin page: http://127.0.0.1:%s/admin (loopback only; set COUPLELINK_ADMIN_TOKEN to allow LAN)", portOf(addr))
 	if err = server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal("HTTP server failed")
 	}

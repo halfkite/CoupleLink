@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ApiError, Client, normalizeOrigin, type Cache, type ChatCache, type Device, type Session, type Transport, type Message } from '../src/core.ts';
+import { ApiError, Client, normalizeOrigin, parseLoginLink, type Cache, type ChatCache, type Device, type Session, type Transport, type Message } from '../src/core.ts';
 class MemoryCache implements Cache {
   values = new Map<string, ChatCache>(); fail = false;
   async load(scope: string) { return structuredClone(this.values.get(scope) || { scope, cursor: 0, read: 0, messages: [], draft: '' }); }
@@ -132,4 +132,11 @@ test('reminder acknowledgement waits for successful native notification', async 
   f.override(path => path === '/account' ? Promise.resolve({ status: 200, data: { user: f.user, couple: f.couple, features: ['memories_v1'] } }) : path.startsWith('/anniversaries/reminders?') ? Promise.resolve({ status: 200, data: { reminders: [{ id: crypto.randomUUID(), title: 'special day' }] } }) : null);
   await f.client.sync(); assert.equal(f.client.state.notificationError, 'notification_denied');
   assert.equal(f.calls.some(c => c.path === '/anniversaries/reminders/receipts'), false);
+});
+
+test('login links carry the server origin and the group key', () => {
+  assert.deepEqual(parseLoginLink('http://127.0.0.1:30710-keyabcdefghijklmnopqrst'), { origin: 'http://127.0.0.1:30710', key: 'keyabcdefghijklmnopqrst' });
+  assert.deepEqual(parseLoginLink(' http://192.168.137.1:30710-key234567abcdefghijklmn '), { origin: 'http://192.168.137.1:30710', key: 'key234567abcdefghijklmn' });
+  assert.throws(() => parseLoginLink('http://127.0.0.1:30710'), (error: any) => error.code === 'invalid_login_link');
+  assert.throws(() => parseLoginLink('http://8.8.8.8:30710-keyabcdefghijklmnopqrst'), (error: any) => error.code === 'invalid_login_link');
 });

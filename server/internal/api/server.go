@@ -28,6 +28,7 @@ type Config struct {
 	RealtimeURL    string
 	RealtimeAPIKey string
 	RealtimeSecret string
+	AdminToken     string
 }
 type Server struct {
 	db        *pgxpool.Pool
@@ -84,7 +85,7 @@ func Migrate(ctx context.Context, db *pgxpool.Pool) error {
 	if err = tx.QueryRow(ctx, `SELECT COALESCE(max(version),0) FROM schema_migrations`).Scan(&current); err != nil {
 		return err
 	}
-	if current > 4 {
+	if current > 5 {
 		return errors.New("unsupported schema version")
 	}
 	if current == 0 {
@@ -116,6 +117,14 @@ func Migrate(ctx context.Context, db *pgxpool.Pool) error {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(4)`); err != nil {
+			return err
+		}
+	}
+	if current < 5 {
+		if _, err = tx.Exec(ctx, migrations.AccessKeys); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(5)`); err != nil {
 			return err
 		}
 	}
@@ -183,6 +192,10 @@ func (s *Server) wrap(fn endpoint) http.HandlerFunc {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.wrap(s.health))
+	mux.HandleFunc("POST /auth/key", s.wrap(s.keyLogin))
+	mux.HandleFunc("GET /admin", s.wrap(s.adminPage))
+	mux.HandleFunc("POST /admin/keys", s.wrap(s.adminCreateKey))
+	mux.HandleFunc("POST /admin/keys/{id}/revoke", s.wrap(s.adminRevokeKey))
 	mux.HandleFunc("POST /auth/register", s.wrap(s.register))
 	mux.HandleFunc("POST /auth/login", s.wrap(s.login))
 	mux.HandleFunc("POST /auth/logout", s.wrap(s.logout))
@@ -215,7 +228,7 @@ func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-CoupleLink-API", "1")
-		if origin := r.Header.Get("Origin"); origin != "" {
+		if origin := r.Header.Get("Origin"); origin != "" && !strings.HasPrefix(r.URL.Path, "/admin") {
 			allowed := false
 			for _, value := range s.cfg.AllowedOrigins {
 				if value == origin {

@@ -1,9 +1,10 @@
 {
   "name": "couplelink",
-  "version": "1.0.0-r11",
+  "version": "1.0.0-r12",
   "private": true,
   "scripts": {
     "check": "node scripts/check-contracts.mjs",
+    "release": "node scripts/build-release.mjs",
     "band:build": "npm --prefix apps/band-vela run build",
     "artifacts": "node scripts/package-artifacts.mjs"
   },

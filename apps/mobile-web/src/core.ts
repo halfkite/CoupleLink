@@ -29,6 +29,17 @@ export function normalizeOrigin(value: string): string {
   if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '10.0.2.2', '10.74.205.253', '192.168.137.1'].includes(url.hostname)) throw new ApiError('http_not_enabled');
   return url.origin;
 }
+/** Accepts "http://host:port-keyxxxx": the key follows the last dash that splits into a valid origin. */
+export function parseLoginLink(value: string): { origin: string; key: string } {
+  const text = value.trim();
+  for (let index = text.length - 1; index > 0; index--) {
+    if (text[index] !== '-') continue;
+    const key = text.slice(index + 1), origin = text.slice(0, index);
+    if (!/^key[a-z0-9]{16,32}$/.test(key)) continue;
+    try { return { origin: normalizeOrigin(origin), key }; } catch { /* keep scanning for an earlier split */ }
+  }
+  throw new ApiError('invalid_login_link');
+}
 export function validateMessage(m: any, couple: string): m is Message {
   return m && typeof m.id === 'string' && m.couple_id === couple && typeof m.sender_id === 'string' && typeof m.body === 'string' && Number.isSafeInteger(m.seq) && m.seq > 0 && typeof m.delivered === 'boolean' && typeof m.created_at === 'string';
 }
@@ -85,6 +96,15 @@ export class Client {
     const data = await this.request(register ? '/auth/register' : '/auth/login', 'POST', {
       username: username.trim().toLowerCase(), password, device_id: deviceId, device_label: 'CoupleLink Web Android', platform: 'android', ...(register ? { display_name: displayName.trim() } : {}),
     }, false);
+    if (typeof data.token !== 'string' || data.token.length !== 43) throw new ApiError('invalid_response');
+    this.token = data.token;
+    await this.device.sessionWrite({ origin: this.state.origin, token: this.token });
+    await this.snapshot();
+  }
+  async authenticateKey(origin: string, key: string, deviceId: string) {
+    await this.changeServer(origin);
+    await this.test(this.state.origin);
+    const data = await this.request('/auth/key', 'POST', { key, device_id: deviceId, device_label: 'CoupleLink Web Android', platform: 'android' }, false);
     if (typeof data.token !== 'string' || data.token.length !== 43) throw new ApiError('invalid_response');
     this.token = data.token;
     await this.device.sessionWrite({ origin: this.state.origin, token: this.token });
