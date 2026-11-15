@@ -153,22 +153,14 @@ final class DeviceRuntime {
         Vibrator vibrator = vibrator(context);
         if (vibrator == null || !vibrator.hasVibrator()) return "unsupported";
         if ("blocked".equals(vibrationOperation(context))) return "suppressed";
-        // Device evidence (2026-11-15, HyperOS 3 / Android 16): a USAGE_TOUCH
-        // request is dropped by the platform with IGNORED_FOR_SETTINGS while the
-        // system touch-haptics switch is off, so the button stayed silent even
-        // though the API call succeeded. Alerts arrive as notifications, so the
-        // direct feedback uses the same notification usage and an explicit
-        // pattern instead of depending on touch-feedback settings.
-        if (Build.VERSION.SDK_INT >= 33) vibrator.vibrate(
-            VibrationEffect.createWaveform(InteractionAlert.VIBRATION_PATTERN, -1),
-            new VibrationAttributes.Builder().setUsage(VibrationAttributes.USAGE_NOTIFICATION).build());
-        else {
-            AudioAttributes attributes = new AudioAttributes.Builder()
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION).build();
-            if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createWaveform(InteractionAlert.VIBRATION_PATTERN, -1), attributes);
-            else vibrator.vibrate(InteractionAlert.VIBRATION_PATTERN, -1);
-        }
+        // Device evidence (2026-11-15, HyperOS 3 / Android 16): touch-usage
+        // requests are dropped with IGNORED_FOR_SETTINGS while "system haptics"
+        // is off, and notification-usage requests are cancelled by MIUI while
+        // its "vibrate for ringtones or notify" switch is off. Pick the usage
+        // whose own switch is open instead of assuming one is always available.
+        String method = feedbackMethod(context);
+        if ("disabled".equals(method)) return "vibration_disabled";
+        vibrate(context, method);
         return "requested";
     }
     static JSObject diagnostics(Context context) {
@@ -181,6 +173,8 @@ final class DeviceRuntime {
         result.put("running", ReceptionService.running);
         result.put("vibrationOperation", vibrationOperation(context));
         result.put("hapticFeedbackEnabled", hapticFeedbackEnabled(context));
+        result.put("notificationVibration", notificationVibrationEnabled(context));
+        result.put("feedbackMethod", feedbackMethod(context));
         org.json.JSONArray channels = new org.json.JSONArray();
         if (Build.VERSION.SDK_INT >= 26) for (String id : new String[]{InteractionAlert.CHANNEL}) {
             NotificationChannel channel = manager.getNotificationChannel(id);
@@ -199,6 +193,39 @@ final class DeviceRuntime {
     }
     private static boolean hapticFeedbackEnabled(Context context) {
         return Settings.System.getInt(context.getContentResolver(), Settings.System.HAPTIC_FEEDBACK_ENABLED, 1) == 1;
+    }
+    /**
+     * MIUI/HyperOS gates notification-usage vibration behind its own "vibrate for
+     * ringtones or notify" switch (logcat: "Vibrate ignored, not vibrating for
+     * ringtones or notify for MIUI"), not behind AOSP's VIBRATE_ON.
+     */
+    private static boolean notificationVibrationEnabled(Context context) {
+        android.content.ContentResolver resolver = context.getContentResolver();
+        int normal = Settings.System.getInt(resolver, "vibrate_in_normal", -1);
+        int silent = Settings.System.getInt(resolver, "vibrate_in_silent", -1);
+        if (normal >= 0 || silent >= 0) return normal == 1 || silent == 1;
+        return Settings.System.getInt(resolver, Settings.System.VIBRATE_ON, 1) == 1;
+    }
+    /** Touch haptics and notification vibration have separate system switches. */
+    static String feedbackMethod(Context context) {
+        if (hapticFeedbackEnabled(context)) return "touch";
+        if (notificationVibrationEnabled(context)) return "notification";
+        return "disabled";
+    }
+    private static void vibrate(Context context, String method) {
+        Vibrator vibrator = vibrator(context);
+        if (Build.VERSION.SDK_INT >= 33) vibrator.vibrate(
+            VibrationEffect.createWaveform(InteractionAlert.VIBRATION_PATTERN, -1),
+            new VibrationAttributes.Builder()
+                .setUsage("touch".equals(method) ? VibrationAttributes.USAGE_TOUCH : VibrationAttributes.USAGE_NOTIFICATION)
+                .build());
+        else {
+            AudioAttributes attributes = new AudioAttributes.Builder()
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .setUsage("touch".equals(method) ? AudioAttributes.USAGE_ASSISTANCE_SONIFICATION : AudioAttributes.USAGE_NOTIFICATION).build();
+            if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createWaveform(InteractionAlert.VIBRATION_PATTERN, -1), attributes);
+            else vibrator.vibrate(InteractionAlert.VIBRATION_PATTERN, -1);
+        }
     }
     private static String vibrationOperation(Context context) {
         try {

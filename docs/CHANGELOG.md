@@ -1,3 +1,7 @@
+# 1.0-r11 振动用途自适应（2026-11-15）
+
+r10 把反馈改为通知用途后，在 HyperOS 上反而完全不振动：MIUI 对通知用途另有一道“振动（响铃/通知）”开关，关闭时以 `CANCELLED_BY_APP_OPS` 丢弃，日志为 `not vibrating for ringtones or notify for MIUI`。r11 改为读取两条闸门自适应选择触感/通知用途，两者都关时返回 `vibration_disabled` 并明确提示，不再假报“已请求”。详见 FEEDBACK.md。本轮不修改服务器。
+
 # 1.0-r10 震动根因修复（2026-11-15）
 
 真机只读诊断确认：系统“触感/系统触感”关闭时，安卓把 `USAGE_TOUCH` 的振动以 `IGNORED_FOR_SETTINGS` 丢弃，应用调用成功但马达不工作；通知渠道只启用振动却没有振动模式，导致“有通知、有提示音、无振动”。r10 把应用内反馈改为通知用途并显式波形，通知渠道升级为 `couplelink_alerts_v2` 并显式设置振动模式，诊断新增“系统触感”与渠道振动模式。详见 FEEDBACK.md。本轮不修改服务器。

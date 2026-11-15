@@ -16,7 +16,7 @@ import (
 	_ "time/tzdata"
 )
 
-var version = "1.0-r10"
+var version = "1.0-r11"
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

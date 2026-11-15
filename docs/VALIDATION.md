@@ -1,3 +1,7 @@
+# 2026-11-15：1.0-r11 振动用途自适应
+
+r10 装机后完全不振动。只读 logcat 显示 `mUsage=NOTIFICATION ... CANCELLED_BY_APP_OPS`，并伴随 MIUI 日志 `Vibrate ignored, not vibrating for ringtones or notify for MIUI`；同时该机 `haptic_feedback_enabled=0`、`vibrate_in_normal=0`、`vibrate_in_silent=0`，两条闸门都关。r11 改为按开关自适应选择触感/通知用途，两者都关时返回 `vibration_disabled`。23 项 TS 测试、`vue-tsc`、Vite 构建、6 项 JVM 策略测试通过；Release APK 同证书 versionCode 11。真机三种状态（触感开／仅振动开／都关）待安装后验收。
+
 # 2026-11-15：1.0-r10 震动根因修复
 
 只读诊断（未安装、未修改手机设置）：Xiaomi 24122RKC7C / HyperOS 3 / Android 16。`haptic_feedback_enabled=0`，`dumpsys vibrator_manager` 显示 `TOUCH = OFF`，logcat 中 uid=10537 的三次请求均为 `mUsage=TOUCH ... IGNORED_FOR_SETTINGS`；用户打开“系统触感”后同一按钮立即振动。通知渠道 `couplelink_alerts_v1` 实测 `mVibrationEnabled=true` 但 `mVibrationPattern=null`、`mVibrationEffect=null`。r10 修复见 FEEDBACK.md。23 项 TS 测试、`vue-tsc`、Vite 构建、6 项 JVM 策略测试通过；Release APK 以同一证书签名，versionCode 10。r10 的真机振动仍需安装后以只读 logcat 确认，本轮不以构建成功代替。

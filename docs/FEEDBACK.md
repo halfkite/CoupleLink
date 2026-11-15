@@ -1,3 +1,41 @@
+# 1.0-r11 振动用途自适应（2026-11-15）
+
+## 为什么 r10 反而完全不振动
+
+r10 把前台反馈从 `USAGE_TOUCH` 改成 `USAGE_NOTIFICATION`，依据是当时强度表里通知用途为 MEDIUM。真机复测后完全不振动，只读 logcat 给出了 MIUI 自己的拒绝原因：
+
+```
+E/VibratorManagerServiceImpl: Vibrate ignored, not vibrating for ringtones or notify for MIUI
+Vibration for uid=10537 attrs={mUsage=NOTIFICATION, mAudioUsage= USAGE_UNKNOWN} ended with status CANCELLED_BY_APP_OPS
+```
+
+复测时该机 `haptic_feedback_enabled=0`、`vibrate_in_normal=0`、`vibrate_in_silent=0`，两个用途的闸门都关着，所以一条都不通。r10 的判断只对了一半。
+
+【真实根因（修正 r10）】这套 ROM 上有两条互不相同的闸门：
+
+- 触感用途 `USAGE_TOUCH` 受「系统触感」`Settings.System.HAPTIC_FEEDBACK_ENABLED` 控制；为 0 时请求被 `IGNORED_FOR_SETTINGS` 丢弃（r9 现象）。
+- 通知用途 `USAGE_NOTIFICATION` 受 MIUI 自己的「振动（响铃/通知）」控制，与 AOSP 的 `VIBRATE_ON` 无关；关闭时请求被 `CANCELLED_BY_APP_OPS` 丢弃，日志明写 “not vibrating for ringtones or notify for MIUI”（r10 现象）。
+
+两者都为 0 时，任何应用都拿不到马达，这不是应用能合法绕过的。
+
+【修复方案】不再固定某一种用途，按可用闸门自适应：
+
+- 读取两条闸门：`HAPTIC_FEEDBACK_ENABLED` 与 MIUI 的 `vibrate_in_normal`／`vibrate_in_silent`（两个键缺失时回退 `VIBRATE_ON`）。
+- 触感开 → `USAGE_TOUCH`（真机已确认可用）；触感关但通知振动开 → `USAGE_NOTIFICATION`；两者都关 → 返回 `vibration_disabled`，按钮显示“手机的振动开关都是关闭的”，**不再假报“已请求”**。
+- 诊断新增「通知振动」与「振动方式」（当前实际会走哪条），方便一眼看出该开哪个开关。
+- 通知渠道继续使用 v2 + 显式振动模式（r10 的修复保留），它依赖的正是通知振动开关。
+
+【修改代码】`DeviceRuntime.java`（`feedbackMethod`／`notificationVibrationEnabled`／振动分支）、`App.vue`、`device.ts`、`strings.ts`；版本 1.0-r11。
+
+【回归校验】23 项 TS 测试、`vue-tsc`、Vite 构建、JVM 策略测试通过，Release APK 以同一证书签名。真机验收分三种状态：系统触感开 → 触感路径振动；仅“振动”开 → 通知路径振动；两者都关 → 明确提示而不是假成功。本轮没有修改手机任何设置。
+
+## 边界
+
+- 「两者都关」时无法振动是系统行为；应用只如实报告，并指出该打开哪个开关。
+- 触感路径与通知路径的取舍以系统开关为准，不绕过用户设置（不使用闹钟/来电等用途强行振动）。
+
+---
+
 # 1.0-r10 震动根因修复（2026-11-15）
 
 ## 结论：根因已由真机系统证据确认

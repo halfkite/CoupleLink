@@ -14,7 +14,7 @@ interface NativeDevice {
   status(): Promise<{ running: boolean; notificationsEnabled: boolean }>;
   launch(): Promise<{ kind: string | null }>;
 }
-export type NotificationDiagnostics = { sdk: number; manufacturer: string; model: string; notificationsEnabled: boolean; hasVibrator: boolean; ringerMode: number; interruptionFilter: number; running: boolean; vibrationOperation: string; hapticFeedbackEnabled: boolean; channels: { id: string; exists: boolean; importance?: number; sound?: boolean; vibration?: boolean; pattern?: boolean }[] };
+export type NotificationDiagnostics = { sdk: number; manufacturer: string; model: string; notificationsEnabled: boolean; hasVibrator: boolean; ringerMode: number; interruptionFilter: number; running: boolean; vibrationOperation: string; hapticFeedbackEnabled: boolean; notificationVibration: boolean; feedbackMethod: string; channels: { id: string; exists: boolean; importance?: number; sound?: boolean; vibration?: boolean; pattern?: boolean }[] };
 export const native = registerPlugin<NativeDevice>('CoupleDevice');
 export const isAndroid = Capacitor.getPlatform() === 'android';
 let webSession: Session | null = null;
