@@ -30,6 +30,11 @@ public class InteractionAlertTest {
         InteractionAlert alert = InteractionAlert.of("vibrate", true, false, true);
         assertFalse(alert.sound); assertFalse(alert.vibrate);
     }
+    @Test public void AlertChannelExposesAnExplicitVibrationPattern() {
+        assertTrue("A channel without a pattern never vibrates.", InteractionAlert.VIBRATION_PATTERN.length >= 2);
+        assertEquals(0L, InteractionAlert.VIBRATION_PATTERN[0]);
+        assertEquals("couplelink_alerts_v2", InteractionAlert.CHANNEL);
+    }
     @Test(expected = IllegalArgumentException.class) public void UnknownActionCannotBecomeAnAlert() {
         InteractionAlert.of("invalid", true, true, true);
     }

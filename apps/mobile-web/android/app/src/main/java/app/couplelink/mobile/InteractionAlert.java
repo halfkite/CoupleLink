@@ -2,7 +2,10 @@ package app.couplelink.mobile;
 
 /** One policy for foreground and background interaction notifications. */
 final class InteractionAlert {
-    static final String CHANNEL = "couplelink_alerts_v1";
+    /** v2 adds an explicit vibration pattern; channel settings are immutable once created. */
+    static final String CHANNEL = "couplelink_alerts_v2";
+    /** Shared by the notification channel and the in-app feedback button. */
+    static final long[] VIBRATION_PATTERN = {0, 250, 150, 250};
     final boolean sound, vibrate;
     final String channel;
     private InteractionAlert(boolean sound, boolean vibrate, String channel) {

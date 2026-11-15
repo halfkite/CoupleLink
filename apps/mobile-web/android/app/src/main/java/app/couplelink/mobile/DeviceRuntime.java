@@ -6,6 +6,7 @@ import android.content.*;
 import android.content.pm.PackageManager;
 import android.media.*;
 import android.os.*;
+import android.provider.Settings;
 import android.app.AppOpsManager;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
@@ -53,7 +54,8 @@ final class DeviceRuntime {
     static boolean allowed(Context context) { return NotificationManagerCompat.from(context).areNotificationsEnabled() && (Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED); }
     private static final String[] LEGACY_CHANNELS = {
         "couplelink_messages_v1", "couplelink_interactions_quiet_v1",
-        "couplelink_interaction_vibrate_v1", "couplelink_interaction_sound_v1"
+        "couplelink_interaction_vibrate_v1", "couplelink_interaction_sound_v1",
+        "couplelink_alerts_v1"
     };
     static void ensureChannels(Context context) {
         if (Build.VERSION.SDK_INT < 26) return;
@@ -71,14 +73,14 @@ final class DeviceRuntime {
             }
             NotificationChannel messages = manager.getNotificationChannel(LEGACY_CHANNELS[0]);
             NotificationChannel sound = manager.getNotificationChannel(LEGACY_CHANNELS[3]);
-            NotificationChannel vibration = manager.getNotificationChannel(LEGACY_CHANNELS[2]);
             if (sound == null) sound = messages;
-            if (vibration == null) vibration = messages;
             NotificationChannel channel = new NotificationChannel(InteractionAlert.CHANNEL, context.getString(R.string.channel_alerts), importance);
             channel.setSound(sound == null ? RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION) : sound.getSound(),
                 sound == null ? new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build() : sound.getAudioAttributes());
-            channel.enableVibration(vibration == null || vibration.shouldVibrate());
-            if (vibration != null && vibration.getVibrationPattern() != null) channel.setVibrationPattern(vibration.getVibrationPattern());
+            // A channel with vibration enabled but no pattern never vibrates; the
+            // platform falls back to the notification's own (absent) vibration.
+            channel.enableVibration(true);
+            channel.setVibrationPattern(InteractionAlert.VIBRATION_PATTERN);
             channel.setLockscreenVisibility(visibility); channel.setShowBadge(true);
             manager.createNotificationChannel(channel);
         }
@@ -151,17 +153,21 @@ final class DeviceRuntime {
         Vibrator vibrator = vibrator(context);
         if (vibrator == null || !vibrator.hasVibrator()) return "unsupported";
         if ("blocked".equals(vibrationOperation(context))) return "suppressed";
-        // This is an explicit foreground button press, not an incoming alert.
-        // Let Android apply touch-feedback settings instead of notification settings.
+        // Device evidence (2026-11-15, HyperOS 3 / Android 16): a USAGE_TOUCH
+        // request is dropped by the platform with IGNORED_FOR_SETTINGS while the
+        // system touch-haptics switch is off, so the button stayed silent even
+        // though the API call succeeded. Alerts arrive as notifications, so the
+        // direct feedback uses the same notification usage and an explicit
+        // pattern instead of depending on touch-feedback settings.
         if (Build.VERSION.SDK_INT >= 33) vibrator.vibrate(
-            VibrationEffect.createOneShot(VIBRATION_DURATION_MS, VibrationEffect.DEFAULT_AMPLITUDE),
-            new VibrationAttributes.Builder().setUsage(VibrationAttributes.USAGE_TOUCH).build());
+            VibrationEffect.createWaveform(InteractionAlert.VIBRATION_PATTERN, -1),
+            new VibrationAttributes.Builder().setUsage(VibrationAttributes.USAGE_NOTIFICATION).build());
         else {
             AudioAttributes attributes = new AudioAttributes.Builder()
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION).build();
-            if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createOneShot(VIBRATION_DURATION_MS, VibrationEffect.DEFAULT_AMPLITUDE), attributes);
-            else vibrator.vibrate(VIBRATION_DURATION_MS, attributes);
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION).build();
+            if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createWaveform(InteractionAlert.VIBRATION_PATTERN, -1), attributes);
+            else vibrator.vibrate(InteractionAlert.VIBRATION_PATTERN, -1);
         }
         return "requested";
     }
@@ -174,11 +180,12 @@ final class DeviceRuntime {
         result.put("ringerMode", context.getSystemService(AudioManager.class).getRingerMode()); result.put("interruptionFilter", manager.getCurrentInterruptionFilter());
         result.put("running", ReceptionService.running);
         result.put("vibrationOperation", vibrationOperation(context));
+        result.put("hapticFeedbackEnabled", hapticFeedbackEnabled(context));
         org.json.JSONArray channels = new org.json.JSONArray();
         if (Build.VERSION.SDK_INT >= 26) for (String id : new String[]{InteractionAlert.CHANNEL}) {
             NotificationChannel channel = manager.getNotificationChannel(id);
             JSObject entry = new JSObject(); entry.put("id", id); entry.put("exists", channel != null);
-            if (channel != null) { entry.put("importance", channel.getImportance()); entry.put("sound", channel.getSound() != null); entry.put("vibration", channel.shouldVibrate()); }
+            if (channel != null) { entry.put("importance", channel.getImportance()); entry.put("sound", channel.getSound() != null); entry.put("vibration", channel.shouldVibrate()); entry.put("pattern", channel.getVibrationPattern() != null || channel.getVibrationEffect() != null); }
             channels.put(entry);
         }
         result.put("channels", channels); return result;
@@ -189,6 +196,9 @@ final class DeviceRuntime {
             if (manager != null) return manager.getDefaultVibrator();
         }
         return context.getSystemService(Vibrator.class);
+    }
+    private static boolean hapticFeedbackEnabled(Context context) {
+        return Settings.System.getInt(context.getContentResolver(), Settings.System.HAPTIC_FEEDBACK_ENABLED, 1) == 1;
     }
     private static String vibrationOperation(Context context) {
         try {

@@ -8,8 +8,8 @@ const version=`1.0-r${revision}`,machine=`1.0.0-r${revision}`;
 const edits=new Map();
 function edit(file,replace){const name=path.join(root,file);edits.set(name,replace(fs.readFileSync(name,'utf8')));}
 edit('VERSION',()=>version+'\n');
-for(const file of ['package.json','apps/band-vela/package.json'])edit(file,text=>{const value=JSON.parse(text);value.version=machine;return JSON.stringify(value,null,2)+'\n';});
-for(const file of ['package-lock.json','apps/band-vela/package-lock.json'])edit(file,text=>{const value=JSON.parse(text);value.version=machine;value.packages[''].version=machine;return JSON.stringify(value,null,2)+'\n';});
+for(const file of ['package.json','apps/band-vela/package.json','apps/mobile-web/package.json'])edit(file,text=>{const value=JSON.parse(text);value.version=machine;return JSON.stringify(value,null,2)+'\n';});
+for(const file of ['package-lock.json','apps/band-vela/package-lock.json','apps/mobile-web/package-lock.json'])edit(file,text=>{const value=JSON.parse(text);value.version=machine;value.packages[''].version=machine;return JSON.stringify(value,null,2)+'\n';});
 edit('server/cmd/couplelink/main.go',text=>text.replace(/var version = "1\.0-r\d+"/,`var version = "${version}"`));
 edit('apps/band-vela/src/manifest.json',text=>{const value=JSON.parse(text);value.versionName=version;value.versionCode=revision;return JSON.stringify(value,null,2)+'\n';});
 edit('apps/mobile/pubspec.yaml',text=>text.replace(/^version: .*$/m,`version: ${machine}+${revision}`));

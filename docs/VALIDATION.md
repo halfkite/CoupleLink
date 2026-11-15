@@ -1,3 +1,7 @@
+# 2026-11-15：1.0-r10 震动根因修复
+
+只读诊断（未安装、未修改手机设置）：Xiaomi 24122RKC7C / HyperOS 3 / Android 16。`haptic_feedback_enabled=0`，`dumpsys vibrator_manager` 显示 `TOUCH = OFF`，logcat 中 uid=10537 的三次请求均为 `mUsage=TOUCH ... IGNORED_FOR_SETTINGS`；用户打开“系统触感”后同一按钮立即振动。通知渠道 `couplelink_alerts_v1` 实测 `mVibrationEnabled=true` 但 `mVibrationPattern=null`、`mVibrationEffect=null`。r10 修复见 FEEDBACK.md。23 项 TS 测试、`vue-tsc`、Vite 构建、6 项 JVM 策略测试通过；Release APK 以同一证书签名，versionCode 10。r10 的真机振动仍需安装后以只读 logcat 确认，本轮不以构建成功代替。
+
 # 2026-10-28：1.0-r9 本地修正
 
 23项TS测试通过；Go vet及真实隔离PostgreSQL集成测试通过（迁移重入、日期共享/冲突、纪念日CRUD、提醒生成去重/按设备确认/修改取消、解绑撤权、中文搜索/分页/转义/上下文）；本机Edge无头浏览器完整功能流程通过，无页面异常及横向溢出。截图在本地.tools/memories-screenshots。未连接或操作手机；手机声振仍未验收。构建和签名结果见交付校验文件。
