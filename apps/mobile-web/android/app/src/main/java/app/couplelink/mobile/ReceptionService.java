@@ -13,7 +13,8 @@ public class ReceptionService extends Service {
     private boolean disconnected = false;
     @Override public void onCreate() {
         super.onCreate();
-        var notification = DeviceRuntime.notification(this, "connection", "CoupleLink", getString(R.string.background_enabled), true);
+        // An empty body keeps the status bar free of the old "后台接收已开启" line.
+        var notification = DeviceRuntime.notification(this, "connection", "CoupleLink", "", true);
         if (Build.VERSION.SDK_INT >= 29) startForeground(951, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC); else startForeground(951, notification);
         running = true; worker = Executors.newSingleThreadScheduledExecutor(); worker.scheduleWithFixedDelay(this::poll, 0, 5, TimeUnit.SECONDS);
     }
@@ -50,7 +51,7 @@ public class ReceptionService extends Service {
                     data(origin, "/anniversaries/reminders/receipts", "POST", new JSONObject().put("couple_id", couple).put("id", reminder.getString("id")), token);
                 }
             }
-            if (disconnected) { status(getString(R.string.background_connected)); disconnected = false; }
+            if (disconnected) { status(""); disconnected = false; }
             long cursor = config.optLong("cursor");
             JSONObject response = data(origin, "/messages?couple_id=" + couple + "&after=" + cursor, "GET", null, token);
             JSONArray messages = response.getJSONArray("messages"); boolean incoming = false;

@@ -14,6 +14,7 @@ edit('server/cmd/couplelink/main.go',text=>text.replace(/var version = "1\.0-r\d
 edit('apps/band-vela/src/manifest.json',text=>{const value=JSON.parse(text);value.versionName=version;value.versionCode=revision;return JSON.stringify(value,null,2)+'\n';});
 edit('apps/mobile/pubspec.yaml',text=>text.replace(/^version: .*$/m,`version: ${machine}+${revision}`));
 edit('apps/mobile/lib/core/state.dart',text=>text.replace(/appVersion = '1\.0-r\d+'/,`appVersion = '${version}'`));
+edit('apps/mobile-web/src/core.ts',text=>text.replace(/APP_VERSION = '1\.0-r\d+'/,`APP_VERSION = '${version}'`));
 edit('apps/band-vela/src/common/locales.js',text=>text.replace(/"app.version": "1\.0-r\d+"/g,`"app.version": "${version}"`));
 for(const file of ['apps/mobile/web/manifest.json','apps/mobile/web/index.html'])edit(file,text=>text.replaceAll(/1\.0-r\d+/g,version));
 for(const [name,value]of edits)fs.writeFileSync(name,value);

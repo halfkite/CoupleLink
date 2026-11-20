@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.Manifest;
 import android.os.Build;
 import android.content.pm.PackageManager;
+import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.content.ContextCompat;
@@ -29,9 +30,21 @@ public class MainActivity extends BridgeActivity {
         PluginCall call = permissionCall; permissionCall = null;
         if (call != null) { JSObject result = new JSObject(); result.put("granted", DeviceRuntime.allowed(this)); call.resolve(result); }
     }
+    @Override public void onBackPressed() {
+        if (bridge != null) bridge.triggerWindowJSEvent("couplelink-back", "{}");
+        else super.onBackPressed();
+    }
     @Override public void onCreate(Bundle savedInstanceState) {
         registerPlugin(CoupleDevicePlugin.class);
         super.onCreate(savedInstanceState);
+        // Predictive back (on by default for targetSdk 35+) never reaches onBackPressed(); the
+        // AndroidX dispatcher is the only path that still reports the gesture, so register it too.
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() {
+                if (bridge != null) bridge.triggerWindowJSEvent("couplelink-back", "{}");
+                else finish();
+            }
+        });
         if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) android.webkit.WebView.setWebContentsDebuggingEnabled(true);
     }
     @Override public void onResume() { super.onResume(); DeviceRuntime.foreground = true; }

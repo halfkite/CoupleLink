@@ -1,5 +1,6 @@
 <resources>
     <string name="channel_alerts">Message alerts</string>
+    <string name="channel_reminders">Reminders</string>
     <string name="anniversary_reminder">Anniversary reminder</string>
     <string name="channel_connection">Background reception</string>
     <string name="channel_interactions">Couple interactions</string>

@@ -86,11 +86,31 @@ async function save() {
     notice.value = 'saved';
   });
 }
+
+const undo = ref<{ label: string; restore: () => Promise<void> } | null>(null);
+let undoTimer: ReturnType<typeof setTimeout> | undefined;
+// A delete stays recoverable for a moment: undo re-creates the record with a new id.
+function armUndo(label: string, restore: () => Promise<void>) {
+  undo.value = { label, restore };
+  if (undoTimer) clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => { undo.value = null; }, 10000);
+}
+async function revert() {
+  const pending = undo.value;
+  undo.value = null;
+  if (undoTimer) clearTimeout(undoTimer);
+  if (pending) await run(pending.restore);
+}
 async function remove() {
   const target = confirming.value;
   confirming.value = null;
   if (!target) return;
-  await run(async () => { await props.client.deletePeriod(target.id); form.value = null; });
+  const snapshot = { start_date: target.start_date, end_date: target.end_date, flow_level: target.flow_level, note: target.note };
+  await run(async () => {
+    await props.client.deletePeriod(target.id);
+    form.value = null;
+    armUndo(props.t('cycleCalendar'), async () => { await props.client.savePeriod(snapshot); });
+  });
 }
 function askDelete() { if (form.value && form.value.id) { const target = periods.value.find(period => period.id === form.value?.id); if (target) confirming.value = target; } }
 </script>
@@ -99,6 +119,7 @@ function askDelete() { if (form.value && form.value.id) { const target = periods
   <div class="cal-page">
     <p v-if="error" class="banner error" role="alert">{{ t(errorText(error)) }}</p>
     <p v-if="notice" class="banner" role="status">{{ t(notice) }}</p>
+    <p v-if="undo" class="banner undo-bar" role="status">{{ t('deleted') }} · {{ undo.label }} <button type="button" class="undo-action" @click="revert">{{ t('undo') }}</button></p>
     <article class="card cal-card">
       <div class="cal-head">
         <button class="cal-nav" type="button" :aria-label="prevLabel" :disabled="busy" @click="turn(-1)">‹</button>
@@ -146,6 +167,9 @@ function askDelete() { if (form.value && form.value.id) { const target = periods
 </template>
 
 <style scoped>
+.undo-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.undo-action{min-height:36px;padding:4px 14px;border-radius:999px;background:var(--accent);color:var(--bg);font-size:13px;font-weight:650}
+
 .cal-page { width: 100%; max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
 button { min-height: 44px; }
 .cal-card { padding-bottom: 12px; }

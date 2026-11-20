@@ -22,6 +22,10 @@ final class DeviceRuntime {
     static final class ChannelBlockedException extends Exception {}
     static volatile boolean foreground = false;
     static final String PREFS = "couplelink.web.background.v1";
+    /** Reminders must sound even though the interaction channel may have been created silent. */
+    static final String REMINDERS_CHANNEL = "couplelink_reminders_v1";
+    /** The foreground-service notice is silent, so it gets its own quiet channel. */
+    static final String CONNECTION_CHANNEL = "couplelink_connection_v2";
     static final long VIBRATION_DURATION_MS = 200;
     private static Ringtone ringtone;
     private static final Handler handler = new Handler(Looper.getMainLooper());
@@ -84,17 +88,38 @@ final class DeviceRuntime {
             manager.createNotificationChannel(channel);
         }
         if (manager.getNotificationChannel(InteractionAlert.CHANNEL) == null) throw new IllegalStateException("Notification channel missing");
+        if (manager.getNotificationChannel(REMINDERS_CHANNEL) == null) {
+            // The alerts channel importance is the minimum of the legacy channels, so it can
+            // stay silent forever; channel settings are immutable, hence a dedicated loud
+            // channel instead of rebuilding the existing one and resetting the user's choice.
+            NotificationChannel channel = new NotificationChannel(REMINDERS_CHANNEL, context.getString(R.string.channel_reminders), NotificationManager.IMPORTANCE_HIGH);
+            channel.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build());
+            channel.enableVibration(true); channel.setVibrationPattern(InteractionAlert.VIBRATION_PATTERN);
+            channel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE); channel.setShowBadge(true);
+            manager.createNotificationChannel(channel);
+        }
+        if (manager.getNotificationChannel(CONNECTION_CHANNEL) == null) {
+            // A foreground-service notice with the alerts channel rings on every start; v2 is a
+            // fresh id because the old connection channel may exist with a different importance
+            // and an existing channel's importance cannot be lowered.
+            NotificationChannel channel = new NotificationChannel(CONNECTION_CHANNEL, context.getString(R.string.channel_connection), NotificationManager.IMPORTANCE_LOW);
+            channel.setSound(null, null); channel.enableVibration(false); channel.setShowBadge(false);
+            manager.createNotificationChannel(channel);
+        }
         for (String id : LEGACY_CHANNELS) manager.deleteNotificationChannel(id);
         if (!ReceptionService.running) manager.deleteNotificationChannel("couplelink_connection_v1");
     }
     static Notification notification(Context context, String kind, String title, String body, boolean ongoing) {
         return notification(context, kind, title, body, ongoing, ongoing);
     }
+    private static String channelFor(String kind) {
+        return "connection".equals(kind) ? CONNECTION_CHANNEL : "anniversary".equals(kind) || "care".equals(kind) ? REMINDERS_CHANNEL : InteractionAlert.CHANNEL;
+    }
     private static Notification notification(Context context, String kind, String title, String body, boolean ongoing, boolean silent) {
         ensureChannels(context);
         Intent launch = new Intent(context, MainActivity.class).putExtra("couplelink.kind", kind).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent tap = PendingIntent.getActivity(context, ongoing ? 10 : kind.equals("interactions") ? 11 : 12, launch, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, InteractionAlert.CHANNEL).setSmallIcon(R.drawable.ic_couplelink_notification).setContentTitle(title).setContentText(body)
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, channelFor(kind)).setSmallIcon(R.drawable.ic_couplelink_notification).setContentTitle(title).setContentText(body)
                 .setPriority(ongoing ? NotificationCompat.PRIORITY_LOW : NotificationCompat.PRIORITY_HIGH).setCategory(ongoing ? NotificationCompat.CATEGORY_SERVICE : NotificationCompat.CATEGORY_MESSAGE)
                 .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setContentIntent(tap).setAutoCancel(!ongoing).setOngoing(ongoing).setSilent(silent).setOnlyAlertOnce(ongoing);
         if (Build.VERSION.SDK_INT < 26 && !silent) {
@@ -138,7 +163,7 @@ final class DeviceRuntime {
         if (!allowed(context)) throw new SecurityException("Notifications denied");
         Notification notification = notification(context, kind, title, body, false);
         NotificationManager manager = context.getSystemService(NotificationManager.class);
-        if (Build.VERSION.SDK_INT >= 26 && manager.getNotificationChannel(InteractionAlert.CHANNEL).getImportance() == NotificationManager.IMPORTANCE_NONE) throw new ChannelBlockedException();
+        if (Build.VERSION.SDK_INT >= 26 && manager.getNotificationChannel(channelFor(kind)).getImportance() == NotificationManager.IMPORTANCE_NONE) throw new ChannelBlockedException();
         manager.notify(kind.equals("interactions") ? 953 : kind.equals("test") ? 954 : kind.equals("anniversary") ? 955 : 952, notification);
     }
     static String feedback(Context context, boolean sound) throws Exception {
@@ -186,7 +211,7 @@ final class DeviceRuntime {
         result.put("notificationVibration", notificationVibrationEnabled(context));
         result.put("feedbackMethod", feedbackMethod(context));
         org.json.JSONArray channels = new org.json.JSONArray();
-        if (Build.VERSION.SDK_INT >= 26) for (String id : new String[]{InteractionAlert.CHANNEL}) {
+        if (Build.VERSION.SDK_INT >= 26) for (String id : new String[]{InteractionAlert.CHANNEL, REMINDERS_CHANNEL}) {
             NotificationChannel channel = manager.getNotificationChannel(id);
             JSObject entry = new JSObject(); entry.put("id", id); entry.put("exists", channel != null);
             if (channel != null) { entry.put("importance", channel.getImportance()); entry.put("sound", channel.getSound() != null); entry.put("vibration", channel.shouldVibrate()); entry.put("pattern", channel.getVibrationPattern() != null || channel.getVibrationEffect() != null); }

@@ -57,6 +57,9 @@ onMounted(() => { void load(); });
 
 function go(next: Page) { page.value = next; if (next === 'home') void load(); }
 function backHome() { page.value = 'home'; void load(); }
+// Hardware back unwinds the center first; the home screen lets the app close it.
+function back() { if (page.value === 'home') return false; page.value = 'home'; void load(); return true; }
+defineExpose({ back });
 </script>
 
 <template>

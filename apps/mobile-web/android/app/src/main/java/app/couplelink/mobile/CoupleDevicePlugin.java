@@ -1,6 +1,7 @@
 package app.couplelink.mobile;
 
 import android.Manifest;
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
@@ -121,6 +122,11 @@ public class CoupleDevicePlugin extends Plugin {
     }
     @PluginMethod public void status(PluginCall call) { JSObject result = new JSObject(); result.put("running", ReceptionService.running); result.put("notificationsEnabled", DeviceRuntime.allowed(getContext())); call.resolve(result); }
     @PluginMethod public void launch(PluginCall call) { JSObject result = new JSObject(); result.put("kind", getActivity().getIntent().getStringExtra("couplelink.kind")); getActivity().getIntent().removeExtra("couplelink.kind"); call.resolve(result); }
+    @PluginMethod public void exitApp(PluginCall call) {
+        // Capacitor runs plugin methods on its worker thread; finish() belongs on the UI thread.
+        getBridge().executeOnMainThread(() -> { Activity activity = getActivity(); if (activity != null) activity.finish(); });
+        call.resolve();
+    }
     @PluginMethod public void baseline(PluginCall call) {
         try {
             synchronized (ReceptionService.class) {

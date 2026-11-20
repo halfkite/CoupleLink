@@ -40,13 +40,35 @@ async function revokeAll() {
     notice.value = 'shareRevoked';
   });
 }
+
+const undo = ref<{ label: string; restore: () => Promise<void> } | null>(null);
+let undoTimer: ReturnType<typeof setTimeout> | undefined;
+// A delete stays recoverable for a moment: undo re-creates the record with a new id.
+function armUndo(label: string, restore: () => Promise<void>) {
+  undo.value = { label, restore };
+  if (undoTimer) clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => { undo.value = null; }, 10000);
+}
+async function revert() {
+  const pending = undo.value;
+  undo.value = null;
+  if (undoTimer) clearTimeout(undoTimer);
+  if (pending) await run(pending.restore);
+}
 async function deleteAll() {
   confirming.value = false;
+  const periodsSnapshot = [...props.client.care.periods].map(period => ({ start_date: period.start_date, end_date: period.end_date, flow_level: period.flow_level, note: period.note }));
+  const logsSnapshot = [...props.client.care.logs].map(log => ({ log_date: log.log_date, pain_level: log.pain_level, mood: log.mood, symptoms: log.symptoms, note: log.note }));
   await run(async () => {
     for (const period of [...props.client.care.periods]) await props.client.deletePeriod(period.id);
     for (const log of [...props.client.care.logs]) await props.client.deleteLog(log.id);
     await Promise.all([props.client.loadPeriods(), props.client.loadLogs()]);
     notice.value = 'deleteHealthDataDone';
+    if (periodsSnapshot.length || logsSnapshot.length) armUndo(props.t('deleteHealthData'), async () => {
+      for (const period of periodsSnapshot) await props.client.savePeriod(period);
+      for (const log of logsSnapshot) await props.client.saveLog(log);
+      await Promise.all([props.client.loadPeriods(), props.client.loadLogs()]);
+    });
   });
 }
 </script>
@@ -55,6 +77,7 @@ async function deleteAll() {
   <div class="priv-page">
     <p v-if="error" class="banner error" role="alert">{{ t(errorText(error)) }}</p>
     <p v-if="notice" class="banner" role="status">{{ t(notice) }}</p>
+    <p v-if="undo" class="banner undo-bar" role="status">{{ t('deleted') }} · {{ undo.label }} <button type="button" class="undo-action" @click="revert">{{ t('undo') }}</button></p>
     <article v-if="!bound" class="card empty">{{ t('notBound') }}</article>
     <template v-else>
       <article class="card">
@@ -89,6 +112,9 @@ async function deleteAll() {
 </template>
 
 <style scoped>
+.undo-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.undo-action{min-height:36px;padding:4px 14px;border-radius:999px;background:var(--accent);color:var(--bg);font-size:13px;font-weight:650}
+
 .priv-page { width: 100%; max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
 button { min-height: 44px; }
 .priv-list { list-style: none; margin: 12px 0 0; padding: 0; }

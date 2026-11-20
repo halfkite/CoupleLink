@@ -13,6 +13,7 @@ interface NativeDevice {
   baseline(options: { origin: string; user: string; couple: string; cursor: number }): Promise<void>;
   status(): Promise<{ running: boolean; notificationsEnabled: boolean }>;
   launch(): Promise<{ kind: string | null }>;
+  exitApp(): Promise<void>;
   openUrl(options: { url: string }): Promise<void>;
   downloadAndInstall(options: { url: string; sha256?: string }): Promise<{ started: boolean }>;
   fetchImage(options: { origin: string; id: string; token: string }): Promise<{ contentType: string; data: string }>;
@@ -31,6 +32,9 @@ export const device: Device = {
   async notify(kind, title, body) { if (isAndroid) await native.notify({ kind, title, body }); else if(kind === 'anniversary') throw new ApiError('android_only'); },
   async deliverInteraction(options) { return isAndroid ? native.interaction(options) : { result: options.expiresAt > Date.now() && (options.action === 'ring' ? options.allowSound : options.allowVibrate) ? 'unsupported' : 'suppressed' }; },
   async background(options) { if (isAndroid) await native.background(options); else if (options.enabled) throw new ApiError('android_only'); },
+  // A hardware back press at the root of the app leaves it; every inner screen is
+  // unwound by the web layer first.
+  async exitApp() { if (isAndroid) await native.exitApp(); },
 };
 export const transport: Transport = async (origin, path, method, body, token) => {
   normalizeOrigin(origin);

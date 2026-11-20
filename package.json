@@ -1,6 +1,6 @@
 {
   "name": "couplelink",
-  "version": "1.0.0-r64",
+  "version": "1.0.0-r65",
   "private": true,
   "scripts": {
     "check": "node scripts/check-contracts.mjs",

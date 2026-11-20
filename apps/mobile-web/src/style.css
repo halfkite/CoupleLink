@@ -109,7 +109,7 @@ input,textarea,select{border:1.5px solid var(--line);background:var(--card)}
 .action-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .action-head h2{margin:0 0 4px}
 .action-badge{display:grid;place-items:center;min-width:26px;height:26px;padding:0 8px;border-radius:999px;background:var(--soft);color:var(--accent);font-size:12px;font-weight:700}
-.action-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.action-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .action-tile{display:flex;flex-direction:column;align-items:center;gap:7px;padding:0;background:none;border:0;min-height:auto;color:var(--ink)}
 .action-tile:disabled{opacity:.45}
 .action-tile:active .action-bubble{transform:scale(.92);background:var(--accent);color:#fff}

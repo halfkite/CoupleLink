@@ -58,11 +58,30 @@ async function toggle(task: CareTask) {
     await props.client.saveCareTask({ id: task.id, title: task.title, note: task.note, due_at: task.due_at, status: task.status === 'open' ? 'done' : 'open' });
   });
 }
+
+const undo = ref<{ label: string; restore: () => Promise<void> } | null>(null);
+let undoTimer: ReturnType<typeof setTimeout> | undefined;
+// A delete stays recoverable for a moment: undo re-creates the record with a new id.
+function armUndo(label: string, restore: () => Promise<void>) {
+  undo.value = { label, restore };
+  if (undoTimer) clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => { undo.value = null; }, 10000);
+}
+async function revert() {
+  const pending = undo.value;
+  undo.value = null;
+  if (undoTimer) clearTimeout(undoTimer);
+  if (pending) await run(pending.restore);
+}
 async function remove() {
   const target = confirming.value;
   confirming.value = null;
   if (!target) return;
-  await run(async () => { await props.client.deleteCareTask(target.id); });
+  const snapshot = { title: target.title, note: target.note, due_at: target.due_at, status: target.status };
+  await run(async () => {
+    await props.client.deleteCareTask(target.id);
+    armUndo(props.t('careTaskTitle'), async () => { await props.client.saveCareTask(snapshot); });
+  });
 }
 </script>
 
@@ -70,6 +89,7 @@ async function remove() {
   <div class="task-page">
     <p v-if="error" class="banner error" role="alert">{{ t(errorText(error)) }}</p>
     <p v-if="notice" class="banner" role="status">{{ t(notice) }}</p>
+    <p v-if="undo" class="banner undo-bar" role="status">{{ t('deleted') }} · {{ undo.label }} <button type="button" class="undo-action" @click="revert">{{ t('undo') }}</button></p>
     <article class="card">
       <div class="task-head">
         <h2>{{ t('careChecklist') }}</h2>
@@ -119,6 +139,9 @@ async function remove() {
 </template>
 
 <style scoped>
+.undo-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.undo-action{min-height:36px;padding:4px 14px;border-radius:999px;background:var(--accent);color:var(--bg);font-size:13px;font-weight:650}
+
 .task-page { width: 100%; max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
 button { min-height: 44px; }
 .task-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }

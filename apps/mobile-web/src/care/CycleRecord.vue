@@ -62,11 +62,31 @@ async function save() {
     notice.value = 'logSaved';
   });
 }
+
+const undo = ref<{ label: string; restore: () => Promise<void> } | null>(null);
+let undoTimer: ReturnType<typeof setTimeout> | undefined;
+// A delete stays recoverable for a moment: undo re-creates the record with a new id.
+function armUndo(label: string, restore: () => Promise<void>) {
+  undo.value = { label, restore };
+  if (undoTimer) clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => { undo.value = null; }, 10000);
+}
+async function revert() {
+  const pending = undo.value;
+  undo.value = null;
+  if (undoTimer) clearTimeout(undoTimer);
+  if (pending) await run(pending.restore);
+}
 async function remove() {
   const target = confirming.value;
   confirming.value = null;
   if (!target) return;
-  await run(async () => { await props.client.deleteLog(target.id); notice.value = ''; });
+  const snapshot = { log_date: target.log_date, pain_level: target.pain_level, mood: target.mood, symptoms: target.symptoms, note: target.note };
+  await run(async () => {
+    await props.client.deleteLog(target.id);
+    notice.value = '';
+    armUndo(props.t('dailyLog'), async () => { await props.client.saveLog(snapshot); });
+  });
 }
 </script>
 
@@ -74,6 +94,7 @@ async function remove() {
   <div class="log-page">
     <p v-if="error" class="banner error" role="alert">{{ t(errorText(error)) }}</p>
     <p v-if="notice" class="banner" role="status">{{ t(notice) }}</p>
+    <p v-if="undo" class="banner undo-bar" role="status">{{ t('deleted') }} · {{ undo.label }} <button type="button" class="undo-action" @click="revert">{{ t('undo') }}</button></p>
     <article class="card">
       <h2>{{ t('dailyLog') }}</h2>
       <form @submit.prevent="save">
@@ -108,6 +129,9 @@ async function remove() {
 </template>
 
 <style scoped>
+.undo-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.undo-action{min-height:36px;padding:4px 14px;border-radius:999px;background:var(--accent);color:var(--bg);font-size:13px;font-weight:650}
+
 .log-page { width: 100%; max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
 button { min-height: 44px; }
 .log-today { margin: 8px 0 0; border: 1px solid var(--accent); background: transparent; color: var(--accent); border-radius: 999px; padding: 10px 16px; font-size: 14px; }

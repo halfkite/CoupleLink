@@ -124,6 +124,8 @@ export interface Device {
   deliverInteraction?(options: { action: Action; title: string; body: string; allowSound: boolean; allowVibrate: boolean; expiresAt: number }): Promise<{ result: string; notificationError?: string }>;
   openUrl?(url: string): Promise<void>;
   downloadAndInstall?(url: string, sha256?: string): Promise<void>;
+  /** Leaves the app when a hardware back press cannot go one level up. */
+  exitApp?(): Promise<void>;
 
   fetchImage?(origin: string, id: string, token: string): Promise<{ contentType: string; data: string } | null>;
 
@@ -133,15 +135,19 @@ export type Transport = (origin: string, path: string, method: string, body?: un
 
 export class ApiError extends Error { constructor(public code: string) { super(code); } }
 
-export const APP_VERSION = '1.0-r63';
+export const APP_VERSION = '1.0-r65';
 
 /** Orders release revisions so an update check cannot offer a downgrade. */
 
 function revisionOf(value: string) { const match = /^1\.0-r(\d+)$/.exec(value.trim()); return match ? Number(match[1]) : -1; }
 
-export const actions = ['poke', 'miss_you', 'hug', 'vibrate', 'ring'] as const;
+// The home tiles offer four actions; "hug" stays receivable because a phone on the
+// previous release can still send it and it must not degrade into a protocol error.
+export const actions = ['poke', 'miss_you', 'vibrate', 'ring'] as const;
 
-export type Action = typeof actions[number];
+export const receivableActions = ['poke', 'miss_you', 'hug', 'vibrate', 'ring'] as const;
+
+export type Action = typeof receivableActions[number];
 
 export function newID(): string {
 
@@ -1138,7 +1144,7 @@ export class Client {
 
     const { id, action } = data.interaction;
 
-    if (!actions.includes(action) || typeof id !== 'string' || typeof data.remaining_ms !== 'number') throw new ApiError('invalid_response');
+    if (!receivableActions.includes(action) || typeof id !== 'string' || typeof data.remaining_ms !== 'number') throw new ApiError('invalid_response');
 
     const allowed = action === 'ring' ? this.state.allowSound : this.state.allowVibrate;
 

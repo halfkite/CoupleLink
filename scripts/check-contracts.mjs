@@ -13,7 +13,7 @@ const revision=Number(match[1]);
 assert.equal(json('package.json').version,`1.0.0-r${revision}`);
 assert.equal(json('apps/mobile-web/package.json').version,`1.0.0-r${revision}`);
 assert.equal(json('apps/mobile-web/package-lock.json').version,`1.0.0-r${revision}`);
-assert.ok(read('apps/mobile-web/src/App.vue').includes(version));
+assert.ok(read('apps/mobile-web/src/core.ts').includes(`APP_VERSION = '${version}'`),'The web client version constant must match VERSION.');
 for(const file of ['package-lock.json','apps/band-vela/package-lock.json']) {
   assert.equal(json(file).version,`1.0.0-r${revision}`);
   assert.equal(json(file).packages[''].version,`1.0.0-r${revision}`);
