@@ -46,3 +46,6 @@ var UserAvatar string
 
 //go:embed 015_note_featured.sql
 var NoteFeatured string
+
+//go:embed 016_cycle_care.sql
+var CycleCare string

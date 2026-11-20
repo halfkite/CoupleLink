@@ -1,6 +1,6 @@
 {
   "name": "couplelink-band",
-  "version": "1.0.0-r12",
+  "version": "1.0.0-r64",
   "private": true,
   "scripts": {
     "build": "aiot build",

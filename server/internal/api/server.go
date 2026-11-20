@@ -94,7 +94,7 @@ func Migrate(ctx context.Context, db *pgxpool.Pool) error {
 	if err = tx.QueryRow(ctx, `SELECT COALESCE(max(version),0) FROM schema_migrations`).Scan(&current); err != nil {
 		return err
 	}
-	if current > 15 {
+	if current > 16 {
 		return errors.New("unsupported schema version")
 	}
 	if current == 0 {
@@ -214,6 +214,14 @@ func Migrate(ctx context.Context, db *pgxpool.Pool) error {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(15)`); err != nil {
+			return err
+		}
+	}
+	if current < 16 {
+		if _, err = tx.Exec(ctx, migrations.CycleCare); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(16)`); err != nil {
 			return err
 		}
 	}
@@ -340,6 +348,30 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /me/remark", s.wrap(s.updateRemark))
 	mux.HandleFunc("PUT /me/profile", s.wrap(s.updateProfile))
 	mux.HandleFunc("PUT /me/avatar", s.wrap(s.updateAvatar))
+	mux.HandleFunc("GET /care/profile", s.wrap(s.careGetProfile))
+	mux.HandleFunc("PUT /care/profile", s.wrap(s.carePutProfile))
+	mux.HandleFunc("GET /care/periods", s.wrap(s.careListPeriods))
+	mux.HandleFunc("POST /care/periods", s.wrap(s.careSavePeriod))
+	mux.HandleFunc("PUT /care/periods/{id}", s.wrap(s.careSavePeriod))
+	mux.HandleFunc("DELETE /care/periods/{id}", s.wrap(s.careDeletePeriod))
+	mux.HandleFunc("GET /care/logs", s.wrap(s.careListLogs))
+	mux.HandleFunc("POST /care/logs", s.wrap(s.careSaveLog))
+	mux.HandleFunc("PUT /care/logs/{id}", s.wrap(s.careSaveLog))
+	mux.HandleFunc("DELETE /care/logs/{id}", s.wrap(s.careDeleteLog))
+	mux.HandleFunc("GET /care/statistics", s.wrap(s.careStatistics))
+	mux.HandleFunc("GET /care/preferences", s.wrap(s.careGetPreferences))
+	mux.HandleFunc("PUT /care/preferences", s.wrap(s.carePutPreferences))
+	mux.HandleFunc("GET /care/shares", s.wrap(s.careListShares))
+	mux.HandleFunc("POST /care/shares", s.wrap(s.careGrantShare))
+	mux.HandleFunc("DELETE /care/shares/{id}", s.wrap(s.careRevokeShare))
+	mux.HandleFunc("GET /care/partner", s.wrap(s.carePartner))
+	mux.HandleFunc("GET /care/tasks", s.wrap(s.careListTasks))
+	mux.HandleFunc("POST /care/tasks", s.wrap(s.careSaveTask))
+	mux.HandleFunc("PUT /care/tasks/{id}", s.wrap(s.careSaveTask))
+	mux.HandleFunc("DELETE /care/tasks/{id}", s.wrap(s.careDeleteTask))
+	mux.HandleFunc("GET /care/reminders", s.wrap(s.careListReminders))
+	mux.HandleFunc("POST /care/reminders/receipts", s.wrap(s.careAckReminder))
+	mux.HandleFunc("GET /care/dashboard", s.wrap(s.careDashboard))
 	s.attachRealtimeProxy(mux)
 	mux.HandleFunc("GET /", s.webApp)
 	// Log page loads and sign-ins from other devices so a phone that cannot reach
@@ -603,7 +635,7 @@ func (s *Server) account(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	write(w, 200, map[string]any{"user": id.User, "couple": couple, "device_id": id.DeviceID, "features": []string{"memories_v1", "chat_search_v1"}})
+	write(w, 200, map[string]any{"user": id.User, "couple": couple, "device_id": id.DeviceID, "features": []string{"memories_v1", "chat_search_v1", "cycle_care_v1"}})
 	return nil
 }
 func (s *Server) current(w http.ResponseWriter, r *http.Request) error {
@@ -836,6 +868,11 @@ func (s *Server) unbind(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if _, err = tx.Exec(r.Context(), `UPDATE invitations SET revoked_at=now() WHERE creator_id IN ($1,$2) AND used_at IS NULL AND revoked_at IS NULL`, a, b); err != nil {
+		return err
+	}
+	// Sharing is only meaningful inside an active relationship: revoke it in the
+	// same transaction so a partner cannot read stale health data after unbind.
+	if _, err = tx.Exec(r.Context(), `UPDATE care_share_permissions SET revoked_at=now() WHERE (owner_user_id=$1 OR owner_user_id=$2) AND revoked_at IS NULL`, a, b); err != nil {
 		return err
 	}
 	if err = event(r.Context(), tx, "couple.unbound", coupleID, a, b); err != nil {

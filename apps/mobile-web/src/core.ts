@@ -11,6 +11,95 @@ export type Session = { origin: string; token: string };
 
 export type ChatCache = { scope: string; cursor: number; read: number; messages: Message[]; draft: string; notes?: Note[] };
 
+export type CareProfile = { timezone: string; average_cycle_days: number; average_period_days: number; reminder_enabled: boolean };
+
+export type PeriodRecord = { id: string; start_date: string; end_date: string | null; flow_level: 'light' | 'medium' | 'heavy'; note: string; created_at: string; updated_at: string };
+
+export type CycleLog = { id: string; log_date: string; pain_level: number; mood: string; symptoms: string[]; note: string; created_at?: string; updated_at?: string };
+
+export type CarePreferences = { preferred_support: string[]; avoid_support: string[]; note: string };
+
+export type CareScope = 'cycle_summary' | 'period_dates' | 'daily_logs' | 'care_preferences';
+
+export type CareShare = { id: string; scope: CareScope; granted_at: string };
+
+export type CareTask = { id: string; title: string; note: string; due_at: string | null; status: 'open' | 'done'; created_by_me: boolean; subject_me: boolean; created_at: string; updated_at: string; completed_at?: string | null };
+
+export type CareCycleEntry = { start_date: string; end_date: string | null; length_days: number | null };
+
+export type CareStatistics = { average_cycle_days: number; average_period_days: number; cycles: CareCycleEntry[]; predicted_start_date: string | null; predicted_end_date: string | null; days_until_next: number | null; confidence: 'estimate' };
+
+export type CareReminder = { id: string; kind: 'period_upcoming' | 'period_start' | 'log_nudge' | 'care_task'; scheduled_at: string };
+
+/** The partner endpoint never sends flow_level/note: only the shared start/end dates. */
+export type PartnerPeriod = { id: string; start_date: string; end_date: string | null };
+
+export type PartnerCare = { display_name: string; grants: Record<CareScope, boolean>; summary: { predicted_start_date: string | null; days_until_next: number | null; estimate: boolean } | null; periods: PartnerPeriod[] | null; logs: CycleLog[] | null; preferences: CarePreferences | null };
+
+export type CareDashboard = { profile: { average_cycle_days: number; average_period_days: number; reminder_enabled: boolean }; today: { in_period: boolean; period_day: number; has_log: boolean; open_tasks: number }; prediction: { start_date: string | null; days_until: number | null; estimate: boolean } | null; partner: { display_name: string; grants: Record<CareScope, boolean>; summary: PartnerCare['summary'] } | null; shares: { active: CareScope[]; available: CareScope[] } };
+
+function isCareObject(value: unknown): value is Record<string, any> { return !!value && typeof value === 'object' && !Array.isArray(value); }
+
+const CARE_SCOPES: CareScope[] = ['cycle_summary', 'period_dates', 'daily_logs', 'care_preferences'];
+
+const CARE_REMINDER_KINDS: Array<CareReminder['kind']> = ['period_upcoming', 'period_start', 'log_nudge', 'care_task'];
+
+function careProfileValue(value: unknown): CareProfile {
+
+  if (!isCareObject(value) || typeof value.timezone !== 'string' || typeof value.average_cycle_days !== 'number' || typeof value.average_period_days !== 'number' || typeof value.reminder_enabled !== 'boolean') throw new ApiError('invalid_response');
+
+  return value as CareProfile;
+
+}
+
+function carePeriodValue(value: unknown): PeriodRecord {
+
+  if (!isCareObject(value) || typeof value.id !== 'string' || typeof value.start_date !== 'string') throw new ApiError('invalid_response');
+
+  return value as PeriodRecord;
+
+}
+
+function careLogValue(value: unknown): CycleLog {
+
+  if (!isCareObject(value) || typeof value.id !== 'string' || typeof value.log_date !== 'string') throw new ApiError('invalid_response');
+
+  return value as CycleLog;
+
+}
+
+function carePreferencesValue(value: unknown): CarePreferences {
+
+  if (!isCareObject(value) || !Array.isArray(value.preferred_support) || !Array.isArray(value.avoid_support) || typeof value.note !== 'string') throw new ApiError('invalid_response');
+
+  return value as CarePreferences;
+
+}
+
+function careShareValue(value: unknown): CareShare {
+
+  if (!isCareObject(value) || typeof value.id !== 'string' || !CARE_SCOPES.includes(value.scope)) throw new ApiError('invalid_response');
+
+  return value as CareShare;
+
+}
+
+function careTaskValue(value: unknown): CareTask {
+
+  if (!isCareObject(value) || typeof value.id !== 'string' || typeof value.title !== 'string') throw new ApiError('invalid_response');
+
+  return value as CareTask;
+
+}
+
+function careReminderValue(value: unknown): CareReminder {
+
+  if (!isCareObject(value) || typeof value.id !== 'string' || !CARE_REMINDER_KINDS.includes(value.kind)) throw new ApiError('invalid_response');
+
+  return value as CareReminder;
+
+}
+
 export interface Cache {
   load(scope: string): Promise<ChatCache>;
   save(value: ChatCache): Promise<void>;
@@ -114,6 +203,8 @@ export class Client {
 
   memories = { supported: false, anniversaries: [] as Anniversary[], results: [] as Message[], context: null as Message[] | null, query: '', before: 0, more: false };
 
+  care = { supported: false, dashboard: null as CareDashboard | null, profile: null as CareProfile | null, periods: [] as PeriodRecord[], logs: [] as CycleLog[], preferences: null as CarePreferences | null, shares: [] as CareShare[], partner: null as PartnerCare | null, tasks: [] as CareTask[], statistics: null as CareStatistics | null, reminders: [] as CareReminder[] };
+
   private searchEpoch = 0;
 
   private token = ''; private epoch = 0; private syncing = false; private readSent = 0; private cache: ChatCache | null = null; private chatVisible = false;
@@ -207,6 +298,8 @@ export class Client {
 
     this.clearMemories();
 
+    this.clearCare();
+
     Object.assign(this.state, { user: null, couple: null, messages: [], draft: '', cursor: 0, peerRead: 0, unread: false, ready: false, incoming: '', invitation: '', online: false, notificationError: '' });
 
     this.readSent = 0;
@@ -284,6 +377,12 @@ export class Client {
     if (previous !== data.couple?.id) { epoch = ++this.epoch; this.clearMemories(); }
 
     this.memories.supported = Array.isArray(data.features) && data.features.includes('memories_v1');
+
+    // Health data belongs to one relationship: a changed or ended couple must
+    // drop the cached partner view instead of leaving it visible until logout.
+    const careSupported = Array.isArray(data.features) && data.features.includes('cycle_care_v1');
+    if (previous !== data.couple?.id) this.clearCare();
+    this.care.supported = careSupported;
 
     this.state.user = data.user; this.state.couple = data.couple || null; this.state.offline = false;
     if (data.couple) this.prefetchImages([data.couple.my_avatar, data.couple.partner_avatar]);
@@ -744,6 +843,288 @@ export class Client {
     await this.request('/interactions', 'POST', { id: newID(), couple_id: this.state.couple.id, action });
 
     this.state.notice = 'interactionSent';
+
+  }
+
+  /** Resets every care view; the capability flag stays off until the next snapshot. */
+
+  clearCare() {
+
+    Object.assign(this.care, { supported: false, dashboard: null, profile: null, periods: [], logs: [], preferences: null, shares: [], partner: null, tasks: [], statistics: null, reminders: [] });
+
+  }
+
+  /** Refuses every care call on a server without cycle_care_v1 instead of leaking 404s. */
+
+  private async careRequest(path: string, method = 'GET', body?: unknown): Promise<any> {
+
+    if (!this.care.supported) throw new ApiError('upgrade_required');
+
+    return this.request(path, method, body);
+
+  }
+
+  private careUpsert<T extends { id: string }>(list: T[], value: T) {
+
+    const index = list.findIndex(entry => entry.id === value.id);
+
+    if (index >= 0) list[index] = value; else list.push(value);
+
+  }
+
+  async loadCareDashboard(): Promise<CareDashboard> {
+
+    const data = await this.careRequest('/care/dashboard');
+
+    const dashboard = data?.dashboard;
+
+    if (!isCareObject(dashboard) || !isCareObject(dashboard.today) || !isCareObject(dashboard.shares)) throw new ApiError('invalid_response');
+
+    this.care.dashboard = dashboard as CareDashboard;
+
+    return this.care.dashboard;
+
+  }
+
+  async loadCareProfile(): Promise<CareProfile> {
+
+    const data = await this.careRequest('/care/profile');
+
+    this.care.profile = careProfileValue(data?.profile);
+
+    return this.care.profile;
+
+  }
+
+  async saveCareProfile(input: { timezone?: string; average_cycle_days?: number; average_period_days?: number; reminder_enabled?: boolean }): Promise<CareProfile> {
+
+    const data = await this.careRequest('/care/profile', 'PUT', input);
+
+    this.care.profile = careProfileValue(data?.profile);
+
+    return this.care.profile;
+
+  }
+
+  async loadPeriods(from?: string, to?: string): Promise<PeriodRecord[]> {
+
+    const query = new URLSearchParams();
+
+    if (from) query.set('from', from);
+
+    if (to) query.set('to', to);
+
+    const suffix = query.toString();
+
+    const data = await this.careRequest('/care/periods' + (suffix ? '?' + suffix : ''));
+
+    if (!Array.isArray(data?.periods)) throw new ApiError('invalid_response');
+
+    this.care.periods = data.periods.map(carePeriodValue);
+
+    return this.care.periods;
+
+  }
+
+  async savePeriod(input: { id?: string; start_date: string; end_date?: string | null; flow_level?: string; note?: string }): Promise<PeriodRecord> {
+
+    const data = await this.careRequest(input.id ? '/care/periods/' + input.id : '/care/periods', input.id ? 'PUT' : 'POST', input);
+
+    const period = carePeriodValue(data?.period);
+
+    this.careUpsert(this.care.periods, period);
+
+    return period;
+
+  }
+
+  async deletePeriod(id: string): Promise<void> {
+
+    await this.careRequest('/care/periods/' + id, 'DELETE');
+
+    this.care.periods = this.care.periods.filter(entry => entry.id !== id);
+
+  }
+
+  async loadLogs(from?: string, to?: string): Promise<CycleLog[]> {
+
+    const query = new URLSearchParams();
+
+    if (from) query.set('from', from);
+
+    if (to) query.set('to', to);
+
+    const suffix = query.toString();
+
+    const data = await this.careRequest('/care/logs' + (suffix ? '?' + suffix : ''));
+
+    if (!Array.isArray(data?.logs)) throw new ApiError('invalid_response');
+
+    this.care.logs = data.logs.map(careLogValue);
+
+    return this.care.logs;
+
+  }
+
+  async saveLog(input: { id?: string; log_date: string; pain_level?: number; mood?: string; symptoms?: string[] | null; note?: string }): Promise<CycleLog> {
+
+    const data = await this.careRequest(input.id ? '/care/logs/' + input.id : '/care/logs', input.id ? 'PUT' : 'POST', input);
+
+    const log = careLogValue(data?.log);
+
+    this.careUpsert(this.care.logs, log);
+
+    return log;
+
+  }
+
+  async deleteLog(id: string): Promise<void> {
+
+    await this.careRequest('/care/logs/' + id, 'DELETE');
+
+    this.care.logs = this.care.logs.filter(entry => entry.id !== id);
+
+  }
+
+  async loadCareStatistics(): Promise<CareStatistics> {
+
+    const data = await this.careRequest('/care/statistics');
+
+    const value = data?.statistics;
+
+    if (!isCareObject(value) || !Array.isArray(value.cycles) || typeof value.average_cycle_days !== 'number' || typeof value.average_period_days !== 'number' || value.confidence !== 'estimate') throw new ApiError('invalid_response');
+
+    this.care.statistics = value as CareStatistics;
+
+    return this.care.statistics;
+
+  }
+
+  async loadCarePreferences(): Promise<CarePreferences> {
+
+    const data = await this.careRequest('/care/preferences');
+
+    this.care.preferences = carePreferencesValue(data?.preferences ?? data);
+
+    return this.care.preferences;
+
+  }
+
+  async saveCarePreferences(input: CarePreferences): Promise<CarePreferences> {
+
+    const data = await this.careRequest('/care/preferences', 'PUT', input);
+
+    this.care.preferences = carePreferencesValue(data?.preferences ?? data);
+
+    return this.care.preferences;
+
+  }
+
+  async loadCareShares(): Promise<CareShare[]> {
+
+    const data = await this.careRequest('/care/shares');
+
+    if (!Array.isArray(data?.shares)) throw new ApiError('invalid_response');
+
+    this.care.shares = data.shares.map(careShareValue);
+
+    return this.care.shares;
+
+  }
+
+  async grantCareShare(scope: CareScope): Promise<CareShare[]> {
+
+    const data = await this.careRequest('/care/shares', 'POST', { scope });
+
+    if (data?.share !== undefined) this.careUpsert(this.care.shares, careShareValue(data.share));
+
+    else await this.loadCareShares();
+
+    return this.care.shares;
+
+  }
+
+  async revokeCareShare(id: string): Promise<void> {
+
+    await this.careRequest('/care/shares/' + id, 'DELETE');
+
+    this.care.shares = this.care.shares.filter(entry => entry.id !== id);
+
+  }
+
+  async loadPartnerCare(): Promise<PartnerCare> {
+
+    try {
+
+      const data = await this.careRequest('/care/partner');
+
+      const partner = data?.partner;
+
+      if (!isCareObject(partner) || typeof partner.display_name !== 'string' || !isCareObject(partner.grants)) throw new ApiError('invalid_response');
+
+      this.care.partner = partner as PartnerCare;
+
+      return this.care.partner;
+
+    } catch (error) {
+
+      this.care.partner = null;
+
+      throw error;
+
+    }
+
+  }
+
+  async loadCareTasks(status?: 'open' | 'done'): Promise<CareTask[]> {
+
+    const data = await this.careRequest('/care/tasks' + (status ? '?status=' + status : ''));
+
+    if (!Array.isArray(data?.tasks)) throw new ApiError('invalid_response');
+
+    this.care.tasks = data.tasks.map(careTaskValue);
+
+    return this.care.tasks;
+
+  }
+
+  async saveCareTask(input: { id?: string; title: string; note?: string; due_at?: string | null; status?: 'open' | 'done' }): Promise<CareTask> {
+
+    const data = await this.careRequest(input.id ? '/care/tasks/' + input.id : '/care/tasks', input.id ? 'PUT' : 'POST', input);
+
+    const task = careTaskValue(data?.task);
+
+    this.careUpsert(this.care.tasks, task);
+
+    return task;
+
+  }
+
+  async deleteCareTask(id: string): Promise<void> {
+
+    await this.careRequest('/care/tasks/' + id, 'DELETE');
+
+    this.care.tasks = this.care.tasks.filter(entry => entry.id !== id);
+
+  }
+
+  async loadCareReminders(): Promise<CareReminder[]> {
+
+    const data = await this.careRequest('/care/reminders');
+
+    if (!Array.isArray(data?.reminders)) throw new ApiError('invalid_response');
+
+    this.care.reminders = data.reminders.map(careReminderValue);
+
+    return this.care.reminders;
+
+  }
+
+  async ackCareReminder(id: string): Promise<void> {
+
+    await this.careRequest('/care/reminders/receipts', 'POST', { id });
+
+    this.care.reminders = this.care.reminders.filter(entry => entry.id !== id);
 
   }
 

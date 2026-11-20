@@ -176,3 +176,21 @@ input,textarea,select{border:1.5px solid var(--line);background:var(--card)}
 .note-actions .act.on{color:#b57a12;border-color:#f0dcae;background:#fff8e8}
 .note-actions .act.on svg{fill:#f2c14e;stroke:#c9891f}
 .note-actions .act.danger{color:#b4637f}
+/* ---- Home sections: care entry, time and date previews (1.0-r64) ---- */
+.card.home-section{margin:18px 0;padding:18px 20px;min-width:0;overflow-wrap:anywhere}
+.home-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 12px;min-width:0}
+.home-section-head h2{margin:0;font-size:16px;flex:1;min-width:0;overflow-wrap:anywhere}
+.home-section-head .text-button{margin:0;font-size:12.5px;font-weight:600;white-space:nowrap;flex-shrink:0;min-height:36px;min-width:0}
+.home-empty{margin:0;text-align:left}
+.care-entry{display:flex;align-items:center;gap:12px;width:100%;padding:0;background:transparent;text-align:left;color:var(--ink);min-height:0;border-radius:16px}
+.care-entry-ic{display:grid;place-items:center;width:44px;height:44px;min-width:44px;border-radius:14px;background:var(--soft);color:var(--accent)}
+.care-entry-ic svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.care-entry-text{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}
+.care-entry-text b{font-size:15.5px;font-weight:650}
+.care-entry-text small{font-size:12px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}
+.home-time-list{display:flex;flex-direction:column;gap:10px;min-width:0}
+.home-time-item{display:flex;align-items:center;gap:12px;width:100%;min-width:0;min-height:0;padding:10px;border-radius:16px;background:var(--soft);text-align:left;color:var(--ink)}
+.home-time-item.featured{box-shadow:inset 0 0 0 1.5px var(--accent)}
+.home-dates-list{display:flex;flex-direction:column;gap:8px;min-width:0}
+.home-dates-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-radius:16px;background:var(--soft);min-width:0}
+nav button{width:88px;min-width:0}

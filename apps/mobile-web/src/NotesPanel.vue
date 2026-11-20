@@ -85,7 +85,7 @@ function preview(note: Note) { const text = note.body.trim(); return text.length
 </script>
 <template>
   <div ref="page" class="notes-page" >
-    <div class="notes-head"><div><h1 class="notes-title">{{ t('time') }}</h1><p class="subtle">{{ t('notesHint') }}</p></div><button class="primary pill" type="button" :disabled="busy" @click="create">＋ {{ t('newNote') }}</button></div>
+    <div class="notes-head"><p class="subtle">{{ t('notesHint') }}</p><button class="primary pill" type="button" :disabled="busy" @click="create">＋ {{ t('newNote') }}</button></div>
     <p v-if="error" class="banner error" role="alert">{{ t(error) }}</p>
 
     <form v-if="editing" class="note-editor" @submit.prevent="save">

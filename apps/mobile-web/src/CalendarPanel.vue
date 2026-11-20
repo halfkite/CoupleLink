@@ -16,7 +16,6 @@ function countdown(a: Anniversary) { const d = anniversaryDays(a); return d === 
 watch(() => JSON.stringify([props.client.state.couple?.id, props.client.memories.supported]), () => { edit.value = null; date.value = ''; if(props.client.state.couple && props.client.memories.supported) void run(reload, false); }, { immediate: true });
 </script>
 <template>
-  <div class="heading"><h1>{{ t('time') }}</h1><p>{{ t('memoriesSubtitle') }}</p></div>
   <p v-if="error" class="banner error" role="alert">{{ t(error) }} <button @click="run(reload, false)">{{ t('refresh') }}</button></p>
   <p v-if="saved" class="banner" role="status">{{ t('saved') }}</p>
   <article v-if="!client.state.couple || !client.memories.supported" class="card empty">{{ t(client.state.couple ? 'upgrade_required' : 'not_bound') }}</article>

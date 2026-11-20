@@ -9,12 +9,16 @@ import { AutoReception } from './reception';
 import ChatPanel from './ChatPanel.vue';
 import CalendarPanel from './CalendarPanel.vue';
 import NotesPanel from './NotesPanel.vue';
+import CareCenter from './care/CareCenter.vue';
+import HomeCare from './home/HomeCare.vue';
+import HomeTime from './home/HomeTime.vue';
+import HomeDates from './home/HomeDates.vue';
 const locale = ref<Locale>(localStorage.getItem('cl.locale') === 'en' ? 'en' : 'zh');
 const t = (key: string) => text(key, locale.value);
 const remarkDraft = ref('');
 const browserOrigin = typeof location !== 'undefined' && /^https?:$/.test(location.protocol) ? location.origin : '';
-const client = new Client(transport, new ChatStorage(), device, t); client.state = reactive(client.state); client.memories = reactive(client.memories); const s = client.state;
-const tab = ref('home'), theme = ref(localStorage.getItem('cl.theme') || 'sakura');
+const client = new Client(transport, new ChatStorage(), device, t); client.state = reactive(client.state); client.memories = reactive(client.memories); client.care = reactive(client.care); const s = client.state;
+const tab = ref('home'), carePage = ref<'' | 'care'>(''), theme = ref(localStorage.getItem('cl.theme') || 'sakura');
 const vvHeight = ref(0);
 const update = ref<{ version: string; url: string; size?: number; sha256?: string } | null>(null), updateState = ref<'' | 'none' | 'busy'>(''), updatePrompt = ref<{ version: string; url: string; size?: number; sha256?: string } | null>(null), dismissedVersion = ref('');
 const profileOpen = ref(false), nicknameDraft = ref(''), avatarPicker = ref<HTMLInputElement>(), startDraft = ref(''), profileSaved = ref(false), settingsPage = ref<string>('');
@@ -156,7 +160,14 @@ async function openUpdate() {
   if (!target) return;
   try { updatePrompt.value = null; await device.downloadAndInstall?.(target.url, target.sha256); s.notice = t('downloadingUpdate'); } catch (e) { s.notice = t(errorCode(e)); }
 }
-function notificationTap() { void run(async () => { tab.value = isAndroid && (await native.launch()).kind === 'anniversary' ? 'time' : 'chat'; }); }
+// A paired couple on an old server is told why the center cannot open; an unpaired
+// member may still enter and the center asks them to pair first.
+function openCare() {
+  if (s.couple && !client.care.supported) { s.notice = t('careUnsupported'); return; }
+  carePage.value = 'care';
+  if (client.care.supported) void client.loadCareDashboard().catch(() => { /* the center renders its own error state */ });
+}
+function notificationTap() { void run(async () => { carePage.value = ''; tab.value = isAndroid && (await native.launch()).kind === 'anniversary' ? 'time' : 'chat'; }); }
 async function visibility() { if (!document.hidden) { await client.sync(); await autoReception(); } }
 onMounted(() => { void run(async () => { if (isAndroid) { s.background = (await native.status()).running;  } await client.restore(); if (isAndroid) { const kind = (await native.launch()).kind; if(kind === 'messages' || kind === 'anniversary') tab.value = kind === 'anniversary' ? 'time' : 'chat'; } if (s.origin) address.value = s.origin; await client.sync(); void autoCheckUpdate(); }); timer = setInterval(() => { if (!document.hidden) void client.sync(); }, 2000); document.addEventListener('visibilitychange', visibility); window.addEventListener('couplelink-notification', notificationTap); syncViewport(); window.visualViewport?.addEventListener('resize', syncViewport); window.addEventListener('resize', syncViewport); });
 onUnmounted(() => { if (timer) clearInterval(timer); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('couplelink-notification', notificationTap); window.visualViewport?.removeEventListener('resize', syncViewport); window.removeEventListener('resize', syncViewport); });
@@ -174,18 +185,22 @@ onUnmounted(() => { if (timer) clearInterval(timer); document.removeEventListene
       <div v-if="s.offline" class="banner" role="status">离线模式 · 显示本地缓存的聊天记录</div>
 <div v-if="s.notice" class="banner prominent" role="status">{{ t(s.notice) }} <button @click="s.notice = ''" :aria-label="t('close')">×</button></div>
       </div>
+      <template v-if="carePage !== 'care'">
       <section v-if="tab === 'home'">
         <div class="heading"><p class="eyebrow">JUST THE TWO OF US</p><h1>{{ t('space') }} <span>♡</span></h1><p>{{ t('subtitle') }}</p></div>
         <article class="love-card"><div class="couple-avatars"><div class="avatar"><img v-if="s.couple?.my_avatar && client.imageURL(s.couple.my_avatar)" class="avatar-img" :src="client.imageURL(s.couple.my_avatar)" alt="" /><template v-else>{{ s.user?.display_name?.slice(0, 1) || '♡' }}</template></div><span>♥</span><div class="avatar partner"><img v-if="s.couple?.partner_avatar && client.imageURL(s.couple.partner_avatar)" class="avatar-img" :src="client.imageURL(s.couple.partner_avatar)" alt="" /><template v-else>{{ partnerName?.slice(0, 1) || '♡' }}</template></div></div><p>{{ t('days') }}</p><div class="days">{{ days }} <small>{{ t('dayUnit') }}</small></div><div class="names">{{ s.user?.display_name || 'CoupleLink' }} <span>&</span> {{ partnerName || '♡' }}</div><p class="subtle">{{ s.couple ? s.couple.start_at : t(s.user ? 'bindFirst' : 'connectFirst') }}</p><button v-if="s.couple" class="text-button" @click="tab = 'me'">{{ t('editStartDate') }} →</button></article>
         <article class="card action-card"><div class="action-head"><div><h2>{{ t('interactions') }}</h2><p class="subtle">{{ t('interactionsHint') }}</p></div><span class="action-badge">5</span></div><div class="action-grid"><button v-for="action in actions" :key="action" type="button" class="action-tile" :disabled="pending || !s.couple" @click="run(() => client.interact(action))"><span class="action-bubble"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-for="d in actionIcons[action]" :key="d" :d="d" /></svg></span><span class="action-label">{{ t(action) }}</span></button></div></article>
         <article class="card status-card"><span class="status-dot" :class="{ online: s.online }"></span><div><strong>{{ t(s.online ? 'online' : 'offline') }}</strong><p>{{ partnerName || t('bindFirst') }}</p></div><button @click="tab = 'me'">→</button></article>
+        <HomeCare :client="client" :t="t" @open="openCare" />
+        <HomeTime :client="client" :t="t" @open="tab = 'time'" />
+        <HomeDates :client="client" :t="t" @open="tab = 'time'" />
       </section>
       <section v-if="tab === 'chat'"><ChatPanel :client="client" :t="t" /></section>
-      <section v-if="tab === 'time'"><NotesPanel :client="client" :t="t" /><details class="card anniversaries"><summary>{{ t('anniversaries') }}</summary><CalendarPanel :client="client" :t="t" /></details></section>
+      <section v-if="tab === 'time'"><div class="detail-head"><button type="button" class="back" :aria-label="t('backHome')" @click="tab = 'home'">‹</button><h1>{{ t('time') }}</h1></div><NotesPanel :client="client" :t="t" /><details class="card anniversaries"><summary>{{ t('anniversaries') }}</summary><CalendarPanel :client="client" :t="t" /></details></section>
       <section v-if="tab === 'map'"><div class="heading"><h1>{{ t('map') }}</h1><p>{{ t('featurePending') }}</p></div><article class="card empty"><span class="empty-icon">⌖</span><p>{{ t('mapHelp') }}</p></article></section>
       <section v-if="tab === 'me'">
         <template v-if="!settingsPage">
-        <div class="heading"><h1>{{ t('me') }}</h1><p>CoupleLink · 1.0-r63</p></div>
+        <div class="heading"><h1>{{ t('me') }}</h1><p>CoupleLink · 1.0-r64</p></div>
         <p v-if="actionError" class="banner error" role="alert">{{ t(actionError) }}</p>
         <button class="set-row" type="button" @click="settingsPage = 'account'"><span class="set-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12.4a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2zM5 20a7 7 0 0 1 14 0" /></svg></span><span class="set-text"><b>{{ t('sectionAccount') }}</b><small>{{ s.user ? s.user.display_name : t('sectionAccount') }}</small></span><i class="chev">›</i></button>
         <button class="set-row" type="button" @click="settingsPage = 'couple'"><span class="set-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v3M17 4.5v3M4.5 9.5h15M6 6.5h12a1.5 1.5 0 0 1 1.5 1.5v10.5A1.5 1.5 0 0 1 18 20H6a1.5 1.5 0 0 1-1.5-1.5V8A1.5 1.5 0 0 1 6 6.5z" /></svg></span><span class="set-text"><b>{{ t('sectionCouple') }}</b><small>{{ s.couple ? s.couple.start_at : t('date') }}</small></span><i class="chev">›</i></button>
@@ -215,8 +230,10 @@ onUnmounted(() => { if (timer) clearInterval(timer); document.removeEventListene
         <article v-if="settingsPage === 'server'" class="card"><h2>{{ t('addresses') }}</h2><label>{{ t('server') }}<input v-model="address" inputmode="url"></label><p v-if="address.startsWith('http:')" class="warning">{{ t('httpWarning') }}</p><div class="button-grid"><button class="outline" @click="run(async () => { feedback = t('testOk') + ' · ' + await client.test(address) })">{{ t('test') }}</button><button class="outline" @click="run(async () => { const value = normalizeOrigin(address); if(!addresses.includes(value)) addresses.push(value) })">{{ t('addAddress') }}</button></div><p class="subtle">{{ t('manualAddresses') }}</p><div v-for="value in addresses" :key="value" class="address-row"><button :disabled="pending || value === s.origin" @click="run(() => selectServer(value))">{{ value }}<small v-if="value === s.origin">{{ t('selected') }}</small></button><button @click="addresses = addresses.filter(x => x !== value)" :aria-label="t('remove')">×</button></div><button class="primary wide" :disabled="pending" @click="run(() => selectServer(address))">{{ t('save') }}</button></article>
         </template>
       </section>
+      </template>
+      <section v-if="carePage === 'care'"><CareCenter :client="client" :t="t" @close="carePage = ''" /></section>
     </main>
-    <nav :aria-label="t('space')"><button v-for="name in ['home', 'map', 'chat', 'time', 'me']" :key="name" :class="{ active: tab === name }" @click="tab = name"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path v-for="d in icons[name]" :key="d" :d="d" /></svg><i v-if="name === 'chat' && s.unread" class="unread" :aria-label="t('newMessage')"></i></span>{{ t(name) }}</button></nav>
+    <nav v-if="carePage !== 'care'" :aria-label="t('space')"><button v-for="name in ['home', 'map', 'chat', 'me']" :key="name" :class="{ active: tab === name }" @click="tab = name"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path v-for="d in icons[name]" :key="d" :d="d" /></svg><i v-if="name === 'chat' && s.unread" class="unread" :aria-label="t('newMessage')"></i></span>{{ t(name) }}</button></nav>
     <div v-if="updatePrompt" class="modal-backdrop"><section class="interaction-dialog update-dialog" role="dialog" aria-modal="true" :aria-label="t('updateAvailable')"><p>{{ t('updateAvailable') }}</p><h1>{{ updatePrompt.version }}</h1><p class="subtle">{{ t('updateExplain') }}</p><button class="primary wide" @click="openUpdate">{{ t('updateNow') }}</button><button class="text-button" @click="dismissUpdate">{{ t('later') }}</button></section></div>
     <div v-if="s.incoming" class="modal-backdrop"><section class="interaction-dialog" role="dialog" aria-modal="true" :aria-label="t('interactionTitle')"><p>{{ t('interactionTitle') }}</p><div class="heart"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-for="d in actionIcons[s.incoming]" :key="d" :d="d" /></svg></div><h1>{{ t(s.incoming) }}</h1><button class="primary wide" autofocus @click="s.incoming = ''">{{ t('close') }}</button></section></div>
   </div>

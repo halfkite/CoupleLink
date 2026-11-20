@@ -17,7 +17,7 @@ import (
 	_ "time/tzdata"
 )
 
-var version = "1.0-r63"
+var version = "1.0-r64"
 
 func portOf(addr string) string {
 	if index := strings.LastIndex(addr, ":"); index >= 0 && index+1 < len(addr) {
@@ -67,6 +67,7 @@ func main() {
 	}
 	go handler.RunRealtimeOutbox(ctx)
 	go handler.RunAnniversaryReminders(ctx)
+	go handler.RunCareReminders(ctx)
 	addr := os.Getenv("COUPLELINK_LISTEN_ADDR")
 	if addr == "" {
 		addr = "0.0.0.0:30710"

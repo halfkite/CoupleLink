@@ -47,16 +47,14 @@ func (s *Server) coupleMember(r *http.Request, coupleID string) (identity, error
 	return id, nil
 }
 
+// isMember checks the live relationship instead of the historical couples row:
+// unbind ends the couple and drops couple_members, so a stale couple_id must
+// stop granting access to shared notes and images immediately.
 func (s *Server) isMember(r *http.Request, coupleID, userID string) (bool, error) {
-	var a, b string
-	err := s.db.QueryRow(r.Context(), `SELECT user_a::text,user_b::text FROM couples WHERE id=$1`, coupleID).Scan(&a, &b)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return userID == a || userID == b, nil
+	var member bool
+	err := s.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM couples c JOIN couple_members m ON m.couple_id=c.id
+  WHERE c.id=$1 AND m.user_id=$2 AND c.status='active')`, coupleID, userID).Scan(&member)
+	return member, err
 }
 
 // authToken authenticates a session passed in the query string; <img> tags cannot
