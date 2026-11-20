@@ -1,4 +1,6 @@
 .tools/
+server/internal/webdist/dist/*
+!server/internal/webdist/dist/.keep
 **/.dart_tool/
 **/build/
 **/node_modules/

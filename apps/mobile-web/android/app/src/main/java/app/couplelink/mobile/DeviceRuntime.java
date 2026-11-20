@@ -29,7 +29,6 @@ final class DeviceRuntime {
         URI uri = new URI(value);
         String scheme = uri.getScheme(), host = uri.getHost();
         if (host == null || uri.getUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null || (uri.getPath() != null && !uri.getPath().isEmpty()) || !("https".equals(scheme) || "http".equals(scheme))) throw new IOException("Invalid origin");
-        if ("http".equals(scheme) && !Arrays.asList("localhost", "127.0.0.1", "10.0.2.2", "10.74.205.253", "192.168.137.1").contains(host)) throw new IOException("HTTP host not enabled");
         return uri.toString();
     }
     static JSObject request(String origin, String path, String method, JSONObject body, String token) throws Exception {
@@ -114,18 +113,25 @@ final class DeviceRuntime {
         Notification notification = notification(context, "interactions", title, body, false, !policy.sound && !policy.vibrate);
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         boolean effective = policy.sound || policy.vibrate;
+        String channelProblem = null;
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel actual = manager.getNotificationChannel(InteractionAlert.CHANNEL);
-            if (actual == null || actual.getImportance() == NotificationManager.IMPORTANCE_NONE) {
-                response.put("notificationError", "channel_blocked"); response.put("result", "suppressed"); return response;
-            }
-            effective = effective && (actual.getSound() != null || actual.shouldVibrate());
+            if (actual == null || actual.getImportance() == NotificationManager.IMPORTANCE_NONE) channelProblem = "channel_blocked";
+            else effective = effective && (actual.getSound() != null || actual.shouldVibrate());
         }
         manager.notify(953, notification);
         AudioManager audio = context.getSystemService(AudioManager.class);
         int filter = manager.getCurrentInterruptionFilter();
-        if (audio.getRingerMode() == AudioManager.RINGER_MODE_SILENT || filter == NotificationManager.INTERRUPTION_FILTER_NONE || filter == NotificationManager.INTERRUPTION_FILTER_ALARMS || filter == NotificationManager.INTERRUPTION_FILTER_PRIORITY) effective = false;
+        boolean quiet = audio.getRingerMode() == AudioManager.RINGER_MODE_SILENT || filter == NotificationManager.INTERRUPTION_FILTER_NONE || filter == NotificationManager.INTERRUPTION_FILTER_ALARMS || filter == NotificationManager.INTERRUPTION_FILTER_PRIORITY;
+        if (quiet) effective = false;
+        // A muted notification channel must not silence the alert: fall back to the
+        // direct motor, the same path the in-app vibration test uses.
+        if (!effective && !quiet && policy.vibrate) {
+            String method = feedbackMethod(context);
+            if (!"disabled".equals(method)) { try { vibrate(context, method); effective = true; } catch (RuntimeException ignored) { } }
+        }
         response.put("result", effective ? "requested" : "suppressed");
+        if (channelProblem != null && (policy.sound || policy.vibrate) && !effective) response.put("notificationError", channelProblem);
         return response;
     }
     static void notify(Context context, String kind, String title, String body) throws Exception {
@@ -161,6 +167,10 @@ final class DeviceRuntime {
         String method = feedbackMethod(context);
         if ("disabled".equals(method)) return "vibration_disabled";
         vibrate(context, method);
+        // A vendor ROM can silently drop one usage; the manual test also fires the
+        // other usage so at least one of the two can move the motor.
+        String second = "touch".equals(method) ? "notification" : "touch";
+        handler.postDelayed(() -> { try { vibrate(context, second); } catch (RuntimeException ignored) { } }, 600);
         return "requested";
     }
     static JSObject diagnostics(Context context) {

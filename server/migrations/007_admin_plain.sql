@@ -1,0 +1,1 @@
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS password_plain text NOT NULL DEFAULT '';

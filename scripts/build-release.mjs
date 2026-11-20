@@ -24,6 +24,13 @@ run(process.execPath, ['node_modules/@capacitor/cli/bin/capacitor', 'sync', 'and
 if (process.platform === 'win32') run('cmd.exe', ['/d', '/s', '/c', 'gradlew.bat', '--no-daemon', 'assembleRelease'], android);
 else run(path.join(android, 'gradlew'), ['--no-daemon', 'assembleRelease'], android);
 
+// Embed the freshly built web bundle so the standalone server answers / itself.
+const embedDist = path.join(server, 'internal', 'webdist', 'dist');
+fs.rmSync(embedDist, { recursive: true, force: true });
+fs.mkdirSync(embedDist, { recursive: true });
+fs.cpSync(path.join(web, 'dist'), embedDist, { recursive: true });
+fs.writeFileSync(path.join(embedDist, '.keep'), '');
+
 fs.mkdirSync(path.join(out, 'server'), { recursive: true });
 // The Go tool needs a writable work directory; keep it inside the project so a
 // restricted TEMP/TMP (common on Windows) cannot break the release build.

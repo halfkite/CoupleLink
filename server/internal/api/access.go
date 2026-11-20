@@ -6,10 +6,10 @@ import (
 	"encoding/base32"
 	"errors"
 	"fmt"
-	"html/template"
 	"net"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -58,9 +58,14 @@ func newAccessKey() (string, error) {
 	return "key" + encoded[:20], nil
 }
 
-// createGroupAndKey provisions a two-person group and its single shared key.
+// createGroupAndKey provisions a two-person group and one key per member.
+// The plaintext is stored alongside the hash so the admin page can show it again.
 func (s *Server) createGroupAndKey(ctx context.Context, label string) (string, string, error) {
 	key, err := newAccessKey()
+	if err != nil {
+		return "", "", err
+	}
+	keyB, err := newAccessKey()
 	if err != nil {
 		return "", "", err
 	}
@@ -69,6 +74,10 @@ func (s *Server) createGroupAndKey(ctx context.Context, label string) (string, s
 		return "", "", err
 	}
 	keyID, err := identifier()
+	if err != nil {
+		return "", "", err
+	}
+	keyBID, err := identifier()
 	if err != nil {
 		return "", "", err
 	}
@@ -108,12 +117,14 @@ func (s *Server) createGroupAndKey(ctx context.Context, label string) (string, s
 			return "", "", err
 		}
 	}
-	hint := key
-	if len(hint) > 10 {
-		hint = hint[:10]
-	}
-	if _, err = tx.Exec(ctx, `INSERT INTO access_keys(id,key_hash,key_hint,couple_id,label) VALUES($1,$2,$3,$4,$5)`, keyID, tokenHash(key), hint, coupleID, label); err != nil {
-		return "", "", err
+	for _, entry := range []struct{ id, value, slot string }{{keyID, key, "a"}, {keyBID, keyB, "b"}} {
+		hint := entry.value
+		if len(hint) > 10 {
+			hint = hint[:10]
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO access_keys(id,key_hash,key_plain,key_hint,couple_id,label,slot) VALUES($1,$2,$3,$4,$5,$6,$7)`, entry.id, tokenHash(entry.value), entry.value, hint, coupleID, label, entry.slot); err != nil {
+			return "", "", err
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return "", "", err
@@ -131,13 +142,18 @@ func chinaZone() *time.Location {
 
 type keyLoginInput struct {
 	Key         string `json:"key"`
+	Gender      string `json:"gender,omitempty"`
 	DeviceID    string `json:"device_id"`
 	DeviceLabel string `json:"device_label"`
 	Platform    string `json:"platform"`
 }
 
+func validGender(value string) bool {
+	return value == "" || value == "male" || value == "female"
+}
+
 // keyLogin signs a device in with the group's key and assigns it to the group
-// member that has fewer active devices.
+// member that has fewer active devices. Gender is a display label only.
 func (s *Server) keyLogin(w http.ResponseWriter, r *http.Request) error {
 	var input keyLoginInput
 	if err := decode(w, r, &input); err != nil {
@@ -148,7 +164,7 @@ func (s *Server) keyLogin(w http.ResponseWriter, r *http.Request) error {
 	if !s.limiter.allow(host) {
 		return fail(429, "rate_limited")
 	}
-	if !accessKeyPattern.Match(input.Key) || !uuidPattern.MatchString(input.DeviceID) || !validText(input.DeviceLabel, 64) || !validText(input.Platform, 24) {
+	if !accessKeyPattern.Match(input.Key) || !uuidPattern.MatchString(input.DeviceID) || !validText(input.DeviceLabel, 64) || !validText(input.Platform, 24) || !validGender(input.Gender) {
 		return fail(400, "invalid_input")
 	}
 	tx, err := s.db.Begin(r.Context())
@@ -157,9 +173,10 @@ func (s *Server) keyLogin(w http.ResponseWriter, r *http.Request) error {
 	}
 	defer tx.Rollback(r.Context())
 	var keyID, coupleID, userA, userB string
-	err = tx.QueryRow(r.Context(), `SELECT k.id::text,k.couple_id::text,c.user_a::text,c.user_b::text
+	var slot *string
+	err = tx.QueryRow(r.Context(), `SELECT k.id::text,k.couple_id::text,c.user_a::text,c.user_b::text,k.slot
   FROM access_keys k JOIN couples c ON c.id=k.couple_id
-  WHERE k.key_hash=$1 AND k.revoked_at IS NULL`, tokenHash(input.Key)).Scan(&keyID, &coupleID, &userA, &userB)
+  WHERE k.key_hash=$1 AND k.revoked_at IS NULL`, tokenHash(input.Key)).Scan(&keyID, &coupleID, &userA, &userB, &slot)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fail(401, "invalid_key")
 	}
@@ -175,17 +192,35 @@ func (s *Server) keyLogin(w http.ResponseWriter, r *http.Request) error {
   EXISTS(SELECT 1 FROM devices WHERE id=$3 AND user_id=$2)`, userA, userB, input.DeviceID).Scan(&countA, &countB, &deviceA, &deviceB); err != nil {
 		return err
 	}
-	member := userA
-	switch {
-	case deviceA:
+	// A key issued for one slot always binds that member; legacy shared keys keep
+	// the first-device/second-device behaviour.
+	member := ""
+	if slot != nil {
+		switch *slot {
+		case "a":
+			member = userA
+		case "b":
+			member = userB
+		}
+	}
+	if member == "" {
 		member = userA
-	case deviceB:
-		member = userB
-	case countB < countA:
-		member = userB
+		switch {
+		case deviceA:
+			member = userA
+		case deviceB:
+			member = userB
+		case countB < countA:
+			member = userB
+		}
 	}
 	if err = lockUsers(r.Context(), tx, member); err != nil {
 		return err
+	}
+	if input.Gender != "" {
+		if _, err = tx.Exec(r.Context(), `UPDATE users SET gender=$1 WHERE id=$2`, input.Gender, member); err != nil {
+			return err
+		}
 	}
 	token, expires, err := s.newSession(r.Context(), tx, member, authInput{DeviceID: input.DeviceID, DeviceLabel: input.DeviceLabel, Platform: input.Platform})
 	if err != nil {
@@ -195,7 +230,7 @@ func (s *Server) keyLogin(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var user User
-	if err = tx.QueryRow(r.Context(), `SELECT id::text,username,display_name FROM users WHERE id=$1`, member).Scan(&user.ID, &user.Username, &user.DisplayName); err != nil {
+	if err = tx.QueryRow(r.Context(), `SELECT id::text,username,display_name,gender FROM users WHERE id=$1`, member).Scan(&user.ID, &user.Username, &user.DisplayName, &user.Gender); err != nil {
 		return err
 	}
 	if err = tx.Commit(r.Context()); err != nil {
@@ -205,194 +240,110 @@ func (s *Server) keyLogin(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func (s *Server) adminAllowed(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil && (host == "127.0.0.1" || host == "::1" || host == "10.0.2.2") {
-		return true
-	}
-	token := r.URL.Query().Get("t")
-	if token == "" {
-		token = r.Header.Get("X-Admin-Token")
-	}
-	return s.cfg.AdminToken != "" && secretEqual(token, s.cfg.AdminToken)
-}
-
-type adminRow struct {
-	Couple      string
-	KeyHint     string
-	Label       string
-	Created     string
-	LastUsed    string
-	MemberA     string
-	MemberB     string
-	DevicesA    int
-	DevicesB    int
-	Bound       string
-	KeyID       string
-	Revoked     bool
-}
-
-type adminView struct {
-	Version string
-	Now     string
-	Created string
-	Rows    []adminRow
-	Token   string
-	Listen  string
-}
-
-func (s *Server) adminPage(w http.ResponseWriter, r *http.Request) error {
-	if !s.adminAllowed(r) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(403)
-		_, _ = w.Write([]byte("需要从本机浏览器打开，或提供管理令牌：/admin?t=<令牌>\n"))
-		return nil
-	}
-	rows, err := s.adminRows(r.Context())
+// updateRemark saves the caller's private label for their partner. Both members
+// and the admin page can read it, and it is included in backups.
+func (s *Server) updateRemark(w http.ResponseWriter, r *http.Request) error {
+	identityValue, err := s.auth(r)
 	if err != nil {
 		return err
 	}
-	view := adminView{Version: s.cfg.Version, Now: time.Now().In(chinaZone()).Format("2006-01-02 15:04:05"), Created: r.URL.Query().Get("created"), Rows: rows, Token: r.URL.Query().Get("t"), Listen: s.cfg.Version}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	tmpl, err := template.New("admin").Parse(adminHTML)
-	if err != nil {
+	var input struct {
+		Remark string `json:"remark"`
+	}
+	if err := decode(w, r, &input); err != nil {
 		return err
 	}
-	return tmpl.Execute(w, view)
-}
-
-func (s *Server) adminRows(ctx context.Context) ([]adminRow, error) {
-	rows, err := s.db.Query(ctx, `SELECT c.id::text,k.id::text,k.key_hint,k.label,
-  to_char(k.created_at,'YYYY-MM-DD HH24:MI'),COALESCE(to_char(k.last_used_at,'YYYY-MM-DD HH24:MI'),'—'),
-  ua.display_name,ub.display_name,
-  (SELECT count(*) FROM devices d WHERE d.user_id=c.user_a AND d.revoked_at IS NULL),
-  (SELECT count(*) FROM devices d WHERE d.user_id=c.user_b AND d.revoked_at IS NULL),
-  k.revoked_at IS NOT NULL
-  FROM access_keys k JOIN couples c ON c.id=k.couple_id
-  JOIN users ua ON ua.id=c.user_a JOIN users ub ON ub.id=c.user_b
-  ORDER BY k.created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var list []adminRow
-	for rows.Next() {
-		var row adminRow
-		var revoked bool
-		var lastUsed string
-		if err := rows.Scan(&row.Couple, &row.KeyID, &row.KeyHint, &row.Label, &row.Created, &lastUsed, &row.MemberA, &row.MemberB, &row.DevicesA, &row.DevicesB, &revoked); err != nil {
-			return nil, err
-		}
-		row.LastUsed = lastUsed
-		row.Revoked = revoked
-		switch {
-		case revoked:
-			row.Bound = "已吊销"
-		case row.DevicesA > 0 && row.DevicesB > 0:
-			row.Bound = "双方已登录"
-		case row.DevicesA > 0 || row.DevicesB > 0:
-			row.Bound = "已登录 1 人"
-		default:
-			row.Bound = "未登录"
-		}
-		list = append(list, row)
-	}
-	return list, rows.Err()
-}
-
-func (s *Server) adminCreateKey(w http.ResponseWriter, r *http.Request) error {
-	if !s.adminAllowed(r) {
-		write(w, 403, map[string]string{"code": "forbidden"})
-		return nil
-	}
-	if err := r.ParseForm(); err != nil {
-		write(w, 400, map[string]string{"code": "invalid_input"})
-		return nil
-	}
-	label := strings.TrimSpace(r.FormValue("label"))
-	if len([]rune(label)) > 40 {
-		write(w, 400, map[string]string{"code": "invalid_input"})
-		return nil
-	}
-	key, _, err := s.createGroupAndKey(r.Context(), label)
-	if err != nil {
-		return err
-	}
-	query := "/admin?created=" + key
-	if token := r.URL.Query().Get("t"); token != "" {
-		query += "&t=" + token
-	}
-	http.Redirect(w, r, query, http.StatusSeeOther)
-	return nil
-}
-
-func (s *Server) adminRevokeKey(w http.ResponseWriter, r *http.Request) error {
-	if !s.adminAllowed(r) {
-		write(w, 403, map[string]string{"code": "forbidden"})
-		return nil
-	}
-	id := r.PathValue("id")
-	if !uuidPattern.MatchString(id) {
+	remark := strings.TrimSpace(input.Remark)
+	if len([]rune(remark)) > 40 || !validOptionalText(remark) {
 		return fail(400, "invalid_input")
 	}
-	if _, err := s.db.Exec(r.Context(), `UPDATE access_keys SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL`, id); err != nil {
+	var coupleID, userA string
+	err = s.db.QueryRow(r.Context(), `SELECT c.id::text,c.user_a::text FROM couples c
+  JOIN couple_members m ON m.couple_id=c.id AND m.user_id=$1 AND c.status='active' LIMIT 1`, identityValue.User.ID).Scan(&coupleID, &userA)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fail(409, "not_bound")
+	}
+	if err != nil {
 		return err
 	}
-	query := "/admin"
-	if token := r.URL.Query().Get("t"); token != "" {
-		query += "?t=" + token
+	column := "remark_b"
+	if identityValue.User.ID == userA {
+		column = "remark_a"
 	}
-	http.Redirect(w, r, query, http.StatusSeeOther)
+	if _, err = s.db.Exec(r.Context(), `UPDATE couples SET `+column+`=$1 WHERE id=$2`, remark, coupleID); err != nil {
+		return err
+	}
+	couple, err := s.readCouple(r.Context(), identityValue.User.ID)
+	if err != nil {
+		return err
+	}
+	write(w, 200, map[string]any{"couple": couple})
 	return nil
 }
 
-const adminHTML = `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CoupleLink 管理</title>
-<style>
-:root{color-scheme:light dark}
-body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;padding:24px;background:#f7f5fb;color:#241b2f}
-h1{font-size:20px;margin:0 0 4px}
-p.sub{margin:0 0 20px;color:#6d6480;font-size:13px}
-.card{background:#fff;border-radius:12px;padding:16px 18px;margin-bottom:16px;box-shadow:0 1px 3px rgba(40,20,70,.08)}
-table{border-collapse:collapse;width:100%;font-size:13px}
-th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #ece7f3;vertical-align:top}
-th{color:#6d6480;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em}
-code{background:#f2eefb;padding:2px 6px;border-radius:6px;font-size:13px}
-.ok{color:#1a7f4b}.warn{color:#a4600a}.off{color:#8a8296}
-form.inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-input[type=text]{padding:8px 10px;border:1px solid #d9d2e6;border-radius:8px;font-size:13px;min-width:180px}
-button{padding:8px 14px;border:0;border-radius:8px;background:#6b4fa0;color:#fff;font-size:13px;cursor:pointer}
-button.ghost{background:#efe9f8;color:#4a3a63}
-.created{border:1px solid #b8e3c8;background:#effaf3}
-a{color:#6b4fa0}
-</style></head><body>
-<h1>CoupleLink 管理</h1>
-<p class="sub">版本 {{.Version}} · 服务器时间 {{.Now}} · 每个密钥对应一个情侣组</p>
-{{if .Created}}<div class="card created"><strong>新密钥（只显示这一次）</strong><p><code>{{.Created}}</code></p>
-<p class="sub">登录链接示例：<code>http://127.0.0.1:30710-{{.Created}}</code></p></div>{{end}}
-<div class="card">
-  <form class="inline" method="post" action="/admin/keys{{if .Token}}?t={{.Token}}{{end}}">
-    <input type="text" name="label" placeholder="备注（可留空，例如 阿明和小雨）" maxlength="40">
-    <button type="submit">生成密钥（新建一个组）</button>
-  </form>
-</div>
-<div class="card">
-<table>
-<thead><tr><th>组</th><th>密钥</th><th>备注</th><th>成员</th><th>绑定状态</th><th>设备</th><th>最近登录</th><th>操作</th></tr></thead>
-<tbody>
-{{range .Rows}}<tr>
-<td><code>{{.Couple}}</code></td>
-<td><code>{{.KeyHint}}…</code></td>
-<td>{{.Label}}</td>
-<td>{{.MemberA}} / {{.MemberB}}</td>
-<td>{{if eq .Bound "双方已登录"}}<span class="ok">{{.Bound}}</span>{{else if eq .Bound "已登录 1 人"}}<span class="warn">{{.Bound}}</span>{{else}}<span class="off">{{.Bound}}</span>{{end}}</td>
-<td>{{.DevicesA}} / {{.DevicesB}}</td>
-<td>{{.LastUsed}}</td>
-<td>{{if .Revoked}}—{{else}}<form method="post" action="/admin/keys/{{.KeyID}}/revoke{{if $.Token}}?t={{$.Token}}{{end}}"><button class="ghost" type="submit">吊销</button></form>{{end}}</td>
-</tr>{{else}}<tr><td colspan="8" class="off">还没有密钥，点上面的按钮生成第一个。</td></tr>{{end}}
-</tbody></table>
-</div>
-<p class="sub">吊销后该密钥立即失效；已登录的设备在下次会话过期后失效。管理页默认只允许本机访问，局域网访问需带 <code>?t=管理令牌</code>。</p>
-</body></html>`
+// updateProfile lets a member set the nickname others see.
+func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) error {
+	id, err := s.auth(r)
+	if err != nil {
+		return err
+	}
+	var input struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := decode(w, r, &input); err != nil {
+		return err
+	}
+	name := strings.TrimSpace(input.DisplayName)
+	if utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 24 || !validOptionalText(name) {
+		return fail(400, "invalid_input")
+	}
+	if _, err = s.db.Exec(r.Context(), `UPDATE users SET display_name=$1 WHERE id=$2`, name, id.User.ID); err != nil {
+		return err
+	}
+	write(w, 200, map[string]any{"user": map[string]string{"id": id.User.ID, "display_name": name}})
+	return nil
+}
+
+// updateAvatar stores the picture a member picked; it must already be uploaded
+// to the same couple so nobody can point at someone else's image.
+func (s *Server) updateAvatar(w http.ResponseWriter, r *http.Request) error {
+	id, err := s.auth(r)
+	if err != nil {
+		return err
+	}
+	var input struct {
+		ImageID string `json:"image_id"`
+	}
+	if err := decode(w, r, &input); err != nil {
+		return err
+	}
+	var imageID *string
+	if input.ImageID != "" {
+		if !uuidPattern.MatchString(input.ImageID) {
+			return fail(400, "invalid_image")
+		}
+		var couple string
+		var ok bool
+		err = s.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM couple_members m JOIN images i ON i.couple_id=m.couple_id WHERE m.user_id=$1 AND i.id=$2)`, id.User.ID, input.ImageID).Scan(&ok)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fail(400, "invalid_image")
+		}
+		err = s.db.QueryRow(r.Context(), `SELECT i.couple_id::text FROM images i WHERE i.id=$1`, input.ImageID).Scan(&couple)
+		if err != nil {
+			return err
+		}
+		imageID = &input.ImageID
+	}
+	if _, err = s.db.Exec(r.Context(), `UPDATE users SET avatar_image_id=$1 WHERE id=$2`, imageID, id.User.ID); err != nil {
+		return err
+	}
+	value := ""
+	if imageID != nil {
+		value = *imageID
+	}
+	write(w, 200, map[string]any{"avatar_image_id": value})
+	return nil
+}

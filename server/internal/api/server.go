@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log"
 	"encoding/json"
 	"errors"
 	"io"
@@ -28,7 +29,10 @@ type Config struct {
 	RealtimeURL    string
 	RealtimeAPIKey string
 	RealtimeSecret string
-	AdminToken     string
+	AdminFile      string
+	DownloadDir    string
+	DataDir        string
+	PublicURL      string
 }
 type Server struct {
 	db        *pgxpool.Pool
@@ -41,14 +45,19 @@ type User struct {
 	ID          string `json:"id"`
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
+	Gender      string `json:"gender,omitempty"`
 }
 type Couple struct {
-	ID       string `json:"id"`
-	Partner  User   `json:"partner"`
-	StartAt  string `json:"start_at"`
-	Timezone string `json:"timezone"`
-	Version  int64  `json:"version"`
-	Days     int    `json:"days_together"`
+	ID            string `json:"id"`
+	Partner       User   `json:"partner"`
+	StartAt       string `json:"start_at"`
+	Timezone      string `json:"timezone"`
+	Version       int64  `json:"version"`
+	Days          int    `json:"days_together"`
+	MyRemark      string `json:"my_remark,omitempty"`
+	PartnerRemark string `json:"partner_remark,omitempty"`
+	MyAvatar      string `json:"my_avatar,omitempty"`
+	PartnerAvatar string `json:"partner_avatar,omitempty"`
 }
 type identity struct {
 	User                User
@@ -85,7 +94,7 @@ func Migrate(ctx context.Context, db *pgxpool.Pool) error {
 	if err = tx.QueryRow(ctx, `SELECT COALESCE(max(version),0) FROM schema_migrations`).Scan(&current); err != nil {
 		return err
 	}
-	if current > 5 {
+	if current > 15 {
 		return errors.New("unsupported schema version")
 	}
 	if current == 0 {
@@ -125,6 +134,86 @@ func Migrate(ctx context.Context, db *pgxpool.Pool) error {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(5)`); err != nil {
+			return err
+		}
+	}
+	if current < 6 {
+		if _, err = tx.Exec(ctx, migrations.Admin); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(6)`); err != nil {
+			return err
+		}
+	}
+	if current < 7 {
+		if _, err = tx.Exec(ctx, migrations.AdminPlain); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(7)`); err != nil {
+			return err
+		}
+	}
+	if current < 8 {
+		if _, err = tx.Exec(ctx, migrations.GroupArchive); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(8)`); err != nil {
+			return err
+		}
+	}
+	if current < 9 {
+		if _, err = tx.Exec(ctx, migrations.ReadCursors); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(9)`); err != nil {
+			return err
+		}
+	}
+	if current < 10 {
+		if _, err = tx.Exec(ctx, migrations.MessageRecall); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(10)`); err != nil {
+			return err
+		}
+	}
+	if current < 11 {
+		if _, err = tx.Exec(ctx, migrations.MediaNotes); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(11)`); err != nil {
+			return err
+		}
+	}
+	if current < 12 {
+		if _, err = tx.Exec(ctx, migrations.MessagePhotoBody); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(12)`); err != nil {
+			return err
+		}
+	}
+	if current < 13 {
+		if _, err = tx.Exec(ctx, migrations.KeySlots); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(13)`); err != nil {
+			return err
+		}
+	}
+	if current < 14 {
+		if _, err = tx.Exec(ctx, migrations.UserAvatar); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(14)`); err != nil {
+			return err
+		}
+	}
+	if current < 15 {
+		if _, err = tx.Exec(ctx, migrations.NoteFeatured); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations VALUES(15)`); err != nil {
 			return err
 		}
 	}
@@ -184,6 +273,7 @@ func (s *Server) wrap(fn endpoint) http.HandlerFunc {
 			case errors.As(err, &pe) && pe.Code == "23505":
 				write(w, 409, map[string]string{"code": "conflict"})
 			default:
+				log.Printf("internal error on %s %s: %v", r.Method, r.URL.Path, err)
 				write(w, 500, map[string]string{"code": "server_error"})
 			}
 		}
@@ -194,8 +284,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.wrap(s.health))
 	mux.HandleFunc("POST /auth/key", s.wrap(s.keyLogin))
 	mux.HandleFunc("GET /admin", s.wrap(s.adminPage))
+	mux.HandleFunc("GET /admin/login", s.wrap(s.adminLoginPage))
+	mux.HandleFunc("POST /admin/login", s.wrap(s.adminLoginSubmit))
+	mux.HandleFunc("POST /admin/logout", s.wrap(s.adminLogout))
+	mux.HandleFunc("GET /admin/password", s.wrap(s.adminPasswordPage))
+	mux.HandleFunc("POST /admin/password", s.wrap(s.adminPasswordSubmit))
 	mux.HandleFunc("POST /admin/keys", s.wrap(s.adminCreateKey))
 	mux.HandleFunc("POST /admin/keys/{id}/revoke", s.wrap(s.adminRevokeKey))
+	mux.HandleFunc("GET /admin/export", s.wrap(s.adminExport))
+	mux.HandleFunc("POST /admin/import", s.wrap(s.adminImport))
+	mux.HandleFunc("POST /admin/keys/{id}/restore", s.wrap(s.adminRestoreKey))
+	mux.HandleFunc("POST /admin/keys/{id}/purge", s.wrap(s.adminPurgeKey))
+	mux.HandleFunc("GET /admin/groups/{id}/export", s.wrap(s.adminGroupExport))
+	mux.HandleFunc("POST /admin/groups/{id}/import", s.wrap(s.adminGroupImport))
+	mux.HandleFunc("POST /admin/groups/{id}/issue-key", s.wrap(s.adminIssueMemberKey))
 	mux.HandleFunc("POST /auth/register", s.wrap(s.register))
 	mux.HandleFunc("POST /auth/login", s.wrap(s.login))
 	mux.HandleFunc("POST /auth/logout", s.wrap(s.logout))
@@ -219,17 +321,45 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /anniversaries/reminders", s.wrap(s.pendingReminders))
 	mux.HandleFunc("POST /anniversaries/reminders/receipts", s.wrap(s.ackReminder))
 	mux.HandleFunc("POST /messages/receipts", s.wrap(s.deliverMessages))
+	mux.HandleFunc("POST /messages/read", s.wrap(s.markRead))
+	mux.HandleFunc("POST /messages/{id}/recall", s.wrap(s.recallMessage))
+	mux.HandleFunc("GET /update", s.wrap(s.updateManifest))
+	mux.HandleFunc("GET /download/{name}", s.wrap(s.serveDownload))
+	mux.HandleFunc("POST /images", s.wrap(s.uploadImage))
+	mux.HandleFunc("GET /images/{id}", s.wrap(s.serveImage))
+	mux.HandleFunc("GET /notes", s.wrap(s.listNotes))
+	mux.HandleFunc("POST /notes", s.wrap(s.createNote))
+	mux.HandleFunc("PUT /notes/{id}", s.wrap(s.updateNote))
+	mux.HandleFunc("DELETE /notes/{id}", s.wrap(s.deleteNote))
+	mux.HandleFunc("POST /notes/{id}/featured", s.wrap(s.setNoteFeatured))
 	mux.HandleFunc("POST /interactions", s.wrap(s.sendInteraction))
 	mux.HandleFunc("GET /interactions", s.wrap(s.listInteractions))
 	mux.HandleFunc("POST /interactions/claim", s.wrap(s.claimInteraction))
 	mux.HandleFunc("POST /interactions/result", s.wrap(s.interactionResult))
 	mux.HandleFunc("POST /realtime/token", s.wrap(s.realtimeToken))
+	mux.HandleFunc("PUT /me/remark", s.wrap(s.updateRemark))
+	mux.HandleFunc("PUT /me/profile", s.wrap(s.updateProfile))
+	mux.HandleFunc("PUT /me/avatar", s.wrap(s.updateAvatar))
 	s.attachRealtimeProxy(mux)
+	mux.HandleFunc("GET /", s.webApp)
+	// Log page loads and sign-ins from other devices so a phone that cannot reach
+	// the server can be told apart from one the app itself rejects.
+	polled := map[string]bool{"/healthz": true, "/messages": true, "/sync/changes": true,
+		"/interactions/claim": true, "/anniversaries/reminders": true, "/realtime/token": true}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		media := strings.HasPrefix(r.URL.Path, "/notes") || strings.HasPrefix(r.URL.Path, "/images") || strings.HasPrefix(r.URL.Path, "/couples") || strings.HasPrefix(r.URL.Path, "/me")
+		if media {
+			sw := &statusWriter{ResponseWriter: w}
+			w = sw
+			defer func() { log.Printf("media request %s %s -> %d", r.Method, r.URL.Path, sw.status) }()
+		}
+		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && host != "127.0.0.1" && host != "::1" && !polled[r.URL.Path] {
+			log.Printf("访问 from=%s %s %s", host, r.Method, r.URL.Path)
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-CoupleLink-API", "1")
 		if origin := r.Header.Get("Origin"); origin != "" && !strings.HasPrefix(r.URL.Path, "/admin") {
-			allowed := false
+			allowed := origin == "http://"+r.Host || origin == "https://"+r.Host
 			for _, value := range s.cfg.AllowedOrigins {
 				if value == origin {
 					allowed = true
@@ -264,10 +394,10 @@ func (s *Server) auth(r *http.Request) (identity, error) {
 		return identity{}, fail(401, "unauthorized")
 	}
 	var id identity
-	err := s.db.QueryRow(r.Context(), `SELECT u.id::text,u.username,u.display_name,s.id::text,d.id::text
+	err := s.db.QueryRow(r.Context(), `SELECT u.id::text,u.username,u.display_name,u.gender,s.id::text,d.id::text
   FROM sessions s JOIN users u ON u.id=s.user_id JOIN devices d ON d.id=s.device_id AND d.user_id=u.id
   WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now() AND d.revoked_at IS NULL`, tokenHash(token)).Scan(
-		&id.User.ID, &id.User.Username, &id.User.DisplayName, &id.SessionID, &id.DeviceID)
+		&id.User.ID, &id.User.Username, &id.User.DisplayName, &id.User.Gender, &id.SessionID, &id.DeviceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return id, fail(401, "unauthorized")
 	}
@@ -291,6 +421,19 @@ func validText(text string, max int) bool {
 	}
 	for _, r := range text {
 		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+// validOptionalText accepts empty values and rejects control characters; it is
+// used for free-form labels such as remarks that may legitimately be cleared.
+func validOptionalText(text string) bool {
+	if !utf8.ValidString(text) {
+		return false
+	}
+	for _, r := range text {
+		if unicode.IsControl(r) && r != '\t' {
 			return false
 		}
 	}
@@ -358,7 +501,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) error {
 	if err = tx.Commit(r.Context()); err != nil {
 		return err
 	}
-	write(w, 201, map[string]any{"token": token, "expires_at": expires, "user": User{id, input.Username, input.DisplayName}})
+	write(w, 201, map[string]any{"token": token, "expires_at": expires, "user": User{ID: id, Username: input.Username, DisplayName: input.DisplayName}})
 	return nil
 }
 func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
@@ -477,10 +620,15 @@ func (s *Server) current(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) readCouple(ctx context.Context, user string) (*Couple, error) {
 	var c Couple
 	var date time.Time
-	err := s.db.QueryRow(ctx, `SELECT c.id::text,c.start_at,c.timezone,c.version,u.id::text,u.username,u.display_name
+	err := s.db.QueryRow(ctx, `SELECT c.id::text,c.start_at,c.timezone,c.version,
+  u.id::text,u.username,u.display_name,u.gender,
+  CASE WHEN c.user_a=$1 THEN c.remark_a ELSE c.remark_b END,
+  CASE WHEN c.user_a=$1 THEN c.remark_b ELSE c.remark_a END,
+  COALESCE(u.avatar_image_id::text,''),(SELECT COALESCE(avatar_image_id::text,'') FROM users WHERE id=$1)
   FROM couple_members m JOIN couples c ON c.id=m.couple_id AND c.status='active'
   JOIN users u ON u.id=CASE WHEN c.user_a=$1 THEN c.user_b ELSE c.user_a END WHERE m.user_id=$1`, user).Scan(
-		&c.ID, &date, &c.Timezone, &c.Version, &c.Partner.ID, &c.Partner.Username, &c.Partner.DisplayName)
+		&c.ID, &date, &c.Timezone, &c.Version, &c.Partner.ID, &c.Partner.Username, &c.Partner.DisplayName, &c.Partner.Gender,
+		&c.MyRemark, &c.PartnerRemark, &c.PartnerAvatar, &c.MyAvatar)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -798,4 +946,24 @@ func (s *Server) changes(w http.ResponseWriter, r *http.Request) error {
 	}
 	write(w, 200, map[string]any{"events": events, "next_cursor": next, "has_more": len(events) == 100})
 	return nil
+}
+
+// statusWriter records the status code for diagnostics.
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	if w.status == 0 {
+		w.status = code
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(b)
 }

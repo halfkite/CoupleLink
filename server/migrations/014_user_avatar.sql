@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_image_id uuid REFERENCES images(id) ON DELETE SET NULL;

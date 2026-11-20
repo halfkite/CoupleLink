@@ -2,6 +2,14 @@ param([string]$GoCommand = 'go')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $destination = Join-Path $projectRoot '.tools\server-release'
+$webDist = Join-Path $projectRoot 'apps\mobile-web\dist'
+$embedDist = Join-Path $projectRoot 'server\internal\webdist\dist'
+if (Test-Path $webDist) {
+    if (Test-Path $embedDist) { Remove-Item $embedDist -Recurse -Force }
+    New-Item -ItemType Directory -Path $embedDist -Force | Out-Null
+    Copy-Item (Join-Path $webDist '*') $embedDist -Recurse -Force
+}
+New-Item -ItemType File -Path (Join-Path $embedDist '.keep') -Force | Out-Null
 New-Item -ItemType Directory -Path $destination -Force | Out-Null
 $previousOS = $env:GOOS
 $previousArch = $env:GOARCH

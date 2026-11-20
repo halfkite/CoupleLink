@@ -1,6 +1,7 @@
 package app.couplelink.mobile;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.provider.Settings;
@@ -37,6 +38,64 @@ public class CoupleDevicePlugin extends Plugin {
     @PluginMethod public void interaction(PluginCall call) {
         try { call.resolve(DeviceRuntime.interaction(getContext(), call.getString("action", ""), call.getString("title", "CoupleLink"), call.getString("body", ""), call.getBoolean("allowSound", false), call.getBoolean("allowVibrate", false), call.getLong("expiresAt", 0L))); }
         catch (Exception e) { call.reject("Interaction feedback could not be delivered", "feedback_failed"); }
+    }
+    @PluginMethod public void downloadAndInstall(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) { call.reject("invalid_url"); return; }
+        Context context = getContext();
+        if (Build.VERSION.SDK_INT >= 26 && !context.getPackageManager().canRequestPackageInstalls()) {
+            // The user must allow this app to install packages before anything else.
+            try {
+                Intent settings = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:" + context.getPackageName()));
+                settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(settings);
+            } catch (Exception ignored) { }
+            call.reject("install_permission_required");
+            return;
+        }
+        JSObject started = new JSObject(); started.put("started", true); call.resolve(started);
+        new Thread(() -> {
+            String expected = call.getString("sha256", "");
+            java.io.File target = new java.io.File(context.getCacheDir(), "update.apk");
+            try {
+                if (target.isFile() && !expected.isEmpty() && expected.equalsIgnoreCase(sha256(target))) {
+                    // Already downloaded and verified: install without downloading again.
+                } else {
+                    java.io.File temp = new java.io.File(context.getCacheDir(), "update.apk.part");
+                    try (java.io.InputStream input = new java.net.URL(url).openStream(); java.io.OutputStream output = new java.io.FileOutputStream(temp)) {
+                        byte[] buffer = new byte[64 * 1024];
+                        int read;
+                        while ((read = input.read(buffer)) > 0) output.write(buffer, 0, read);
+                    }
+                    if (!expected.isEmpty() && !expected.equalsIgnoreCase(sha256(temp))) { temp.delete(); return; }
+                    if (target.exists() && !target.delete()) { temp.delete(); return; }
+                    if (!temp.renameTo(target)) { temp.delete(); return; }
+                }
+            } catch (Exception error) {
+                return;
+            }
+            android.net.Uri apk;
+            try {
+                apk = androidx.core.content.FileProvider.getUriForFile(context, context.getPackageName() + ".fileprovider", target);
+            } catch (Exception error) {
+                return;
+            }
+            Intent install = new Intent(Intent.ACTION_VIEW)
+                .setDataAndType(apk, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            try { context.startActivity(install); } catch (Exception ignored) { }
+        }).start();
+    }
+    @PluginMethod public void openUrl(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) { call.reject("invalid_url"); return; }
+        // Hand the link to the system browser so a packaged update really downloads.
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (Exception error) { call.reject("open_failed"); }
     }
     @PluginMethod public void diagnostics(PluginCall call) {
         try { DeviceRuntime.ensureChannels(getContext()); call.resolve(DeviceRuntime.diagnostics(getContext())); }
@@ -90,5 +149,51 @@ public class CoupleDevicePlugin extends Plugin {
             if (!prefs.edit().putString("config", call.getData().toString()).commit()) throw new IllegalStateException("Save failed");
             ContextCompat.startForegroundService(getContext(), new Intent(getContext(), ReceptionService.class)); call.resolve();
         } catch (Exception e) { call.reject("Background reception could not start", "background_failed"); }
+    }
+
+    /** SHA-256 of a downloaded file, lower-case hex. */
+    private static String sha256(java.io.File file) throws Exception {
+        java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+        try (java.io.InputStream input = new java.io.FileInputStream(file)) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = input.read(buffer)) > 0) digest.update(buffer, 0, read);
+        }
+        StringBuilder hex = new StringBuilder();
+        for (byte value : digest.digest()) hex.append(String.format("%02x", value));
+        return hex.toString();
+    }
+
+    /** Downloads one photo and returns it as base64 so the WebView can render it. */
+    @PluginMethod public void fetchImage(PluginCall call) {
+        String origin = call.getString("origin");
+        String id = call.getString("id");
+        String token = call.getString("token", "");
+        if (origin == null || id == null || !(origin.startsWith("http://") || origin.startsWith("https://"))) {
+            call.reject("invalid_input");
+            return;
+        }
+        try {
+            java.net.URL url = new java.net.URL(origin + "/images/" + id + "?token=" + java.net.URLEncoder.encode(token, "UTF-8"));
+            java.net.HttpURLConnection connection = (java.net.HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(20000);
+            connection.setRequestMethod("GET");
+            int status = connection.getResponseCode();
+            if (status != 200) { call.reject("image_failed"); return; }
+            String type = connection.getContentType();
+            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+            try (java.io.InputStream input = connection.getInputStream()) {
+                byte[] chunk = new byte[64 * 1024];
+                int read;
+                while ((read = input.read(chunk)) > 0) buffer.write(chunk, 0, read);
+            }
+            JSObject result = new JSObject();
+            result.put("contentType", type == null ? "image/jpeg" : type);
+            result.put("data", android.util.Base64.encodeToString(buffer.toByteArray(), android.util.Base64.NO_WRAP));
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("image_failed");
+        }
     }
 }

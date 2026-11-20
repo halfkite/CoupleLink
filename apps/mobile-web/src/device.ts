@@ -13,6 +13,9 @@ interface NativeDevice {
   baseline(options: { origin: string; user: string; couple: string; cursor: number }): Promise<void>;
   status(): Promise<{ running: boolean; notificationsEnabled: boolean }>;
   launch(): Promise<{ kind: string | null }>;
+  openUrl(options: { url: string }): Promise<void>;
+  downloadAndInstall(options: { url: string; sha256?: string }): Promise<{ started: boolean }>;
+  fetchImage(options: { origin: string; id: string; token: string }): Promise<{ contentType: string; data: string }>;
 }
 export type NotificationDiagnostics = { sdk: number; manufacturer: string; model: string; notificationsEnabled: boolean; hasVibrator: boolean; ringerMode: number; interruptionFilter: number; running: boolean; vibrationOperation: string; hapticFeedbackEnabled: boolean; notificationVibration: boolean; feedbackMethod: string; channels: { id: string; exists: boolean; importance?: number; sound?: boolean; vibration?: boolean; pattern?: boolean }[] };
 export const native = registerPlugin<NativeDevice>('CoupleDevice');
@@ -22,6 +25,9 @@ export const device: Device = {
   async sessionRead() { if (!isAndroid) return webSession; const { value } = await native.sessionRead(); return value ? JSON.parse(value) : null; },
   async sessionWrite(value) { if (isAndroid) await native.sessionWrite({ value: value ? JSON.stringify(value) : null }); else webSession = value; },
   async feedback(sound) { return isAndroid ? (await native.feedback({ sound })).result : 'unsupported'; },
+  async openUrl(url) { if (isAndroid) await native.openUrl({ url }); else window.open(url, '_blank', 'noopener'); },
+  async fetchImage(origin, id, token) { if (!isAndroid) return null; return native.fetchImage({ origin, id, token }); },
+  async downloadAndInstall(url, sha256) { if (isAndroid) { await native.downloadAndInstall({ url, sha256 }); return; } window.open(url, '_blank', 'noopener'); },
   async notify(kind, title, body) { if (isAndroid) await native.notify({ kind, title, body }); else if(kind === 'anniversary') throw new ApiError('android_only'); },
   async deliverInteraction(options) { return isAndroid ? native.interaction(options) : { result: options.expiresAt > Date.now() && (options.action === 'ring' ? options.allowSound : options.allowVibrate) ? 'unsupported' : 'suppressed' }; },
   async background(options) { if (isAndroid) await native.background(options); else if (options.enabled) throw new ApiError('android_only'); },
