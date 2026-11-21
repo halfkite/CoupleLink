@@ -17,7 +17,7 @@ import (
 	_ "time/tzdata"
 )
 
-var version = "1.0-r66"
+var version = "1.0-r67"
 
 func portOf(addr string) string {
 	if index := strings.LastIndex(addr, ":"); index >= 0 && index+1 < len(addr) {

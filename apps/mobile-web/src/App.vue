@@ -204,7 +204,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); document.removeEventListene
       <section v-if="tab === 'home'">
         <HomeBond :client="client" :t="t" @open="target => tab = target" />
         <article class="card action-card"><div class="action-grid"><button v-for="action in actions" :key="action" type="button" class="action-tile" :disabled="pending || !s.couple" :aria-label="t(action)" @click="run(() => client.interact(action))"><span class="action-bubble"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-for="d in actionIcons[action]" :key="d" :d="d" /></svg></span><span class="action-label">{{ t(action) }}</span></button></div></article>
-        <article class="card status-card"><span class="status-dot" :class="{ online: s.online }"></span><div><strong>{{ t(s.online ? 'online' : 'offline') }}</strong><p>{{ partnerName || t('bindFirst') }}</p></div><button @click="tab = 'me'">→</button></article>
+        
         <HomeCare :client="client" :t="t" @open="openCare" />
         <HomeTime :client="client" :t="t" @open="tab = 'time'" />
       </section>

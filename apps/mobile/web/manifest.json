@@ -5,7 +5,7 @@
     "display": "standalone",
     "background_color": "#FCF8F7",
     "theme_color": "#C96288",
-    "description": "CoupleLink 1.0-r66 local UI preview with sample data.",
+    "description": "CoupleLink 1.0-r67 local UI preview with sample data.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

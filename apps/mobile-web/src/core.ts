@@ -135,7 +135,7 @@ export type Transport = (origin: string, path: string, method: string, body?: un
 
 export class ApiError extends Error { constructor(public code: string) { super(code); } }
 
-export const APP_VERSION = '1.0-r66';
+export const APP_VERSION = '1.0-r67';
 
 /** Orders release revisions so an update check cannot offer a downgrade. */
 

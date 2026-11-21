@@ -81,7 +81,7 @@ onMounted(() => {
 onUnmounted(() => { document.removeEventListener('visibilitychange', visibility); window.visualViewport?.removeEventListener('resize', keepBottom); window.removeEventListener('resize', fit); observer?.disconnect(); void props.client.setChatVisible(false); });
 </script>
 <template>
-  <div class="chat-page" ref="root"><div class="heading chat-heading"><div><h1>{{ client.state.couple?.partner.display_name || t('chat') }}</h1><p>{{ t(client.state.online ? 'online' : 'offline') }}</p></div><button v-if="client.state.couple" class="outline" @click="search = !search">⌕ {{ t('searchHistory') }}</button></div>
+  <div class="chat-page" ref="root"><div class="heading chat-heading"><div><h1>{{ client.state.couple?.partner.display_name || t('chat') }}<span class="online-dot" :class="{ online: client.state.online }" role="img" :aria-label="t(client.state.online ? 'online' : 'offline')" :title="t(client.state.online ? 'online' : 'offline')"></span></h1><p v-if="!client.state.online">{{ t('offline') }}</p></div><button v-if="client.state.couple" class="outline" @click="search = !search">⌕ {{ t('searchHistory') }}</button></div>
   <p v-if="error" class="banner error" role="alert">{{ t(error) }}</p>
   <div v-if="!client.state.couple" class="card empty">{{ t('not_bound') }}</div>
   <template v-else>
