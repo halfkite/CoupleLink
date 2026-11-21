@@ -15,8 +15,7 @@ const bound = computed(() => !!props.client.state.couple);
 const empty = computed(() => loaded.value && !notes.value.length);
 
 async function load() {
-  loaded.value = false;
-  if (!props.client.state.couple) { loaded.value = true; return; }
+  if (!props.client.state.couple) { notes.value = []; loaded.value = true; return; }
   try { notes.value = await props.client.listNotes(); }
   catch { /* offline or unsupported: the preview stays empty instead of breaking home */ }
   finally { loaded.value = true; }
@@ -24,7 +23,7 @@ async function load() {
 
 onMounted(() => { void load(); });
 // The home section mounts before login restore finishes, so reload when pairing lands.
-watch(() => props.client.state.couple?.id, () => { void load(); });
+watch(() => props.client.state.couple?.id || '', () => { void load(); });
 
 function excerpt(body: string) {
   const value = body.replace(/\s+/g, ' ').trim();

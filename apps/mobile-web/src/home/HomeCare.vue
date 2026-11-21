@@ -10,15 +10,17 @@ const loaded = ref(false);
 // The first screen must never break on a care request: a failure keeps the card on
 // the empty state and the care center renders its own error handling.
 async function loadCare() {
-  if (!props.client.state.couple || !props.client.care.supported) return;
-  loaded.value = false;
+  if (!props.client.state.couple || !props.client.care.supported) { loaded.value = true; return; }
   try { await props.client.loadCareDashboard(); } catch { /* empty state below */ }
   finally { loaded.value = true; }
 }
 
-onMounted(() => { void loadCare(); });
 // The home section mounts before login restore finishes, so reload when pairing lands.
-watch(() => [props.client.state.couple?.id, props.client.care.supported], () => { void loadCare(); });
+// Compare primitives: an array literal would differ on every evaluation and reload on
+// each sync tick.
+function scope() { return (props.client.state.couple?.id || '') + '|' + (props.client.care.supported ? '1' : '0'); }
+onMounted(() => { void loadCare(); });
+watch(scope, () => { void loadCare(); });
 
 const bound = computed(() => !!props.client.state.couple);
 const supported = computed(() => props.client.care.supported);

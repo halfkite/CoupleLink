@@ -11,15 +11,17 @@ const emit = defineEmits<{ open: [target: 'time' | 'me'] }>();
 const loaded = ref(false);
 
 async function loadDates() {
-  if (!props.client.state.couple || !props.client.memories.supported) return;
-  loaded.value = false;
+  if (!props.client.state.couple || !props.client.memories.supported) { loaded.value = true; return; }
   try { await props.client.loadAnniversaries(); } catch { /* empty state below */ }
   finally { loaded.value = true; }
 }
 
-onMounted(() => { void loadDates(); });
 // The home section mounts before login restore finishes, so reload when pairing lands.
-watch(() => [props.client.state.couple?.id, props.client.memories.supported], () => { void loadDates(); });
+// Compare primitives: an array literal would differ on every evaluation and reload on
+// each sync tick.
+function scope() { return (props.client.state.couple?.id || '') + '|' + (props.client.memories.supported ? '1' : '0'); }
+onMounted(() => { void loadDates(); });
+watch(scope, () => { void loadDates(); });
 
 const couple = computed(() => props.client.state.couple);
 const days = computed(() => couple.value?.days_together ?? null);
